@@ -18,9 +18,28 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/regmap.h>
 
 #include "dpu95.h"
 #include "dpu95-drv.h"
+
+/* register in blk-ctrl */
+#define QOS_SETTING			0x1c
+#define  DISPLAY_PANIC_QOS_MASK		0x70
+#define  DISPLAY_PANIC_QOS(n)		(((n) & 0x7) << 4)
+#define  DISPLAY_ARQOS_MASK		0x7
+#define  DISPLAY_ARQOS(n)		((n) & 0x7)
+
+static inline u32 dpu95_comctrl_irq_read(struct dpu95_soc *dpu, unsigned int offset)
+{
+	return readl(dpu->comctrl_irq_reg + offset);
+}
+
+static inline void dpu95_comctrl_irq_write(struct dpu95_soc *dpu,
+					 unsigned int offset, u32 value)
+{
+	writel(value, dpu->comctrl_irq_reg + offset);
+}
 
 static inline u32 dpu95_disp_irq0_read(struct dpu95_soc *dpu, unsigned int offset)
 {
@@ -626,6 +645,21 @@ void dpu95_submodules_hw_init(struct dpu95_soc *dpu)
 		for (j = 0; j < us->cnt; j++)
 			us->hw_init(dpu, j);
 	}
+}
+
+int dpu95_set_qos(struct dpu95_soc *dpu)
+{
+	int ret;
+
+	ret = regmap_update_bits(dpu->regmap, QOS_SETTING,
+				 DISPLAY_PANIC_QOS_MASK | DISPLAY_ARQOS_MASK,
+				 DISPLAY_PANIC_QOS(0x3) | DISPLAY_ARQOS(0x3));
+	if (ret < 0) {
+		dev_err(dpu->dev, "failed to set QoS: %d\n", ret);
+		return ret;
+	}
+
+	return 0;
 }
 
 static int dpu95_submodules_init(struct dpu95_soc *dpu, unsigned long dpu_base)
