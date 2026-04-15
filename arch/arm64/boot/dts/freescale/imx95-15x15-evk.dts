@@ -214,7 +214,7 @@
 			no-map;
 		};
 
-		vpu_boot: vpu-boot@a0000000 {
+		vpu_boot: memory@a0000000 {
 			reg = <0 0xa0000000 0 0x100000>;
 			no-map;
 		};
@@ -1180,4 +1180,9 @@
 	pinctrl-0 = <&pinctrl_spdif>;
 	pinctrl-names = "default";
 	status = "okay";
+};
+
+&vpu {
+	memory-region = <&vpu_boot>;
+	sram = <&sram1>;
 };

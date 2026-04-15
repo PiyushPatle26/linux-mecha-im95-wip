@@ -1116,3 +1116,8 @@
 &wdog3 {
 	status = "okay";
 };
+
+&vpu {
+	memory-region = <&vpu_boot>;
+	sram = <&sram1>;
+};
