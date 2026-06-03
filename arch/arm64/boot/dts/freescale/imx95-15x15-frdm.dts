@@ -56,6 +56,22 @@
 		num-channels = <2>;
 	};
 
+	/*
+	 * On-board LVDS-to-HDMI bridge (IT6263) output. The display pipeline
+	 * is DPU -> pixel-interleaver -> LDB/LVDS -> IT6263 -> this connector.
+	 */
+	hdmi-connector {
+		compatible = "hdmi-connector";
+		label = "hdmi";
+		type = "a";
+
+		port {
+			hdmi_connector_in: endpoint {
+				remote-endpoint = <&it6263_out>;
+			};
+		};
+	};
+
 	flexcan2_phy: can-phy {
 		compatible = "nxp,tja1051";
 		#phy-cells = <0>;
@@ -265,6 +281,26 @@
 	status = "okay";
 };
 
+/*
+ * Display pipeline, LVDS channel 1 -> IT6263 LVDS-to-HDMI bridge -> HDMI:
+ *   dpu(disp1) -> pixel_interleaver_1 -> display_pixel_link_1
+ *              -> lvds_ch1 -> ldb1 -> it6263 -> hdmi-connector
+ * SoC nodes follow the upstream "Add i.MX95 DPU/DSI/LVDS support" series
+ * (fsl,imx95-dc / fsl,imx95-lvds / fsl,imx95-ldb); the matching DC/LDB drivers
+ * from that series must be applied for this pipeline to bind.
+ */
+&dpu {
+	status = "okay";
+};
+
+&displaymix_irqsteer {
+	status = "okay";
+};
+
+&display_pixel_link_1 {
+	status = "okay";
+};
+
 &enetc_port0 {
 	phy-handle = <&ethphy0>;
 	phy-mode = "rgmii-id";
@@ -293,6 +329,34 @@
 	pinctrl-names = "default";
 	phys = <&flexcan5_phy>;
 	status = "okay";
+};
+
+/* JPEG encoder/decoder - supported by the mainline mxc-jpeg driver. */
+&jpegdec {
+	status = "okay";
+};
+
+&jpegenc {
+	status = "okay";
+};
+
+&lvds {
+	status = "okay";
+};
+
+&lvds_ch1 {
+	status = "okay";
+};
+
+&ldb1 {
+	status = "okay";
+};
+
+/* LVDS channel 1 output of the LDB feeds the IT6263 bridge input. */
+&ldb1_port1 {
+	ldb1_out: endpoint {
+		remote-endpoint = <&it6263_in>;
+	};
 };
 
 &lpi2c2 {
@@ -440,6 +504,48 @@
 			function-enumerator = <1>;
 		};
 	};
+
+	/* LVDS-to-HDMI bridge feeding the on-board HDMI connector. */
+	bridge@4c {
+		compatible = "ite,it6263";
+		reg = <0x4c>;
+		reset-gpios = <&pcal6524 23 GPIO_ACTIVE_LOW>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				it6263_in: endpoint {
+					remote-endpoint = <&ldb1_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				it6263_out: endpoint {
+					remote-endpoint = <&hdmi_connector_in>;
+				};
+			};
+		};
+	};
+};
+
+&lpspi3 {
+	pinctrl-0 = <&pinctrl_lpspi3>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpio2 8 GPIO_ACTIVE_LOW>;
+	fsl,spi-num-chipselects = <1>;
+	status = "okay";
+
+	spidev0: spi@0 {
+		compatible = "lwn,bk4";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+	};
 };
 
 &lpuart1 {
@@ -552,6 +658,10 @@
 	reset-gpio = <&gpio5 13 GPIO_ACTIVE_LOW>;
 	supports-clkreq;
 	vpcie-supply = <&reg_m2_mkey_pwr>;
+	status = "okay";
+};
+
+&pixel_interleaver_1 {
 	status = "okay";
 };
 
@@ -681,6 +791,15 @@
 		fsl,pins = <
 			IMX95_PAD_GPIO_IO30__LPI2C4_SDA				0x40000b9e
 			IMX95_PAD_GPIO_IO31__LPI2C4_SCL				0x40000b9e
+		>;
+	};
+
+	pinctrl_lpspi3: lpspi3grp {
+		fsl,pins = <
+			IMX95_PAD_GPIO_IO08__GPIO2_IO_BIT8			0x3fe
+			IMX95_PAD_GPIO_IO09__LPSPI3_SIN				0x3fe
+			IMX95_PAD_GPIO_IO10__LPSPI3_SOUT			0x3fe
+			IMX95_PAD_GPIO_IO11__LPSPI3_SCK				0x3fe
 		>;
 	};
 
@@ -1030,6 +1149,15 @@
 	vmmc-supply = <&reg_usdhc3_vmmc>;
 	wakeup-source;
 	status = "okay";
+};
+
+/*
+ * Hardware video codec (Chips&Media WAVE). The vpuctrl/vpu nodes are added by
+ * the i.MX95 VPU driver patch series; vpu_boot/sram1 already exist in mainline.
+ */
+&vpuctrl {
+	boot = <&vpu_boot>;
+	sram = <&sram1>;
 };
 
 &wdog3 {

@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright 2025 NXP
+ *
+ * Device tree overlay for the Waveshare 7inch-C MIPI-DSI panel (DSI-to-DPI
+ * bridge + Goodix GT911 touch) on the i.MX95 15x15 FRDM board.
+ *
+ * Uses the upstream "Add i.MX95 DPU/DSI/LVDS support" display pipeline:
+ *   dpu(disp0) -> pixel_interleaver_0 -> display_pixel_link_0 -> mipi_dsi
+ * (dpu and displaymix_irqsteer are already enabled by the base board DTS).
+ * Requires the matching DC/MIPI-DSI drivers from that series.
+ */
+
+/dts-v1/;
+/plugin/;
+
+&{/} {
+	panel {
+		compatible = "waveshare,7.0inch-c-panel", "panel-dpi";
+		power-supply = <&reg_5p0v>;
+
+		port {
+			panel_to_waveshare: endpoint {
+				remote-endpoint = <&waveshare_to_panel>;
+			};
+		};
+
+		panel-timing {
+			clock-frequency = <50000000>;
+			hactive = <1024>;
+			vactive = <600>;
+			hfront-porch = <100>;
+			hback-porch = <100>;
+			hsync-len = <100>;
+			vback-porch = <10>;
+			vfront-porch = <10>;
+			vsync-len = <10>;
+
+			hsync-active = <0>;
+			vsync-active = <0>;
+			de-active = <1>;
+			pixelclk-active = <1>;
+		};
+	};
+};
+
+&display_pixel_link_0 {
+	status = "okay";
+};
+
+&pixel_interleaver_0 {
+	status = "okay";
+};
+
+&lpi2c4 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	touchscreen@14 {
+		compatible = "goodix,gt911";
+		reg = <0x14>;
+		touchscreen-size-x = <800>;
+		touchscreen-size-y = <480>;
+	};
+
+	bridge@45 {
+		compatible = "waveshare,dsi2dpi";
+		reg = <0x45>;
+		power-supply = <&reg_5p0v>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				waveshare_from_dsi: endpoint {
+					data-lanes = <1 2>;
+					remote-endpoint = <&dsi_to_waveshare>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				waveshare_to_panel: endpoint {
+					remote-endpoint = <&panel_to_waveshare>;
+				};
+			};
+		};
+	};
+};
+
+&mipi_dsi {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@1 {
+			reg = <1>;
+
+			dsi_to_waveshare: endpoint {
+				remote-endpoint = <&waveshare_from_dsi>;
+			};
+		};
+	};
+};

@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright 2025 NXP
+ *
+ * Device tree overlay for the OmniVision OS08A20 MIPI-CSI2 camera module on
+ * the i.MX95 15x15 FRDM board.
+ *
+ * DEFERRED / not wired into the Makefile: the CSI receiver / pixel-formatter /
+ * ISI nodes referenced here (dphy_rx, mipi_csi0, csi_pixel_formatter_0, isi)
+ * are NOT in mainline imx95.dtsi. The downstream camera nodes are entangled
+ * with the downstream MIPI-DSI block (shared 0x4acf0000 / mipi_dsi_intf), which
+ * conflicts with the upstream "DPU/DSI/LVDS" display series now used for the
+ * display pipeline. Camera needs its own upstream-aligned i.MX95 CSI/ISI series
+ * (no such series exists yet); this file is kept as a starting point only.
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/gpio/gpio.h>
+
+&{/} {
+	reg_dummy: regulator-dummy {
+		compatible = "regulator-fixed";
+		regulator-name = "cam-dummy";
+	};
+};
+
+&lpi2c4 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	os08a20: camera@36 {
+		compatible = "ovti,os08a20";
+		reg = <0x36>;
+		clocks = <&dummy>;
+		reset-gpios = <&pcal6524 19 GPIO_ACTIVE_LOW>;
+		avdd-supply = <&reg_dummy>;
+		dovdd-supply = <&reg_dummy>;
+		dvdd-supply = <&reg_dummy>;
+		orientation = <2>;
+		rotation = <0>;
+		status = "okay";
+
+		port {
+			os08a20_mipi_0_ep: endpoint {
+				remote-endpoint = <&mipi_csi0_ep>;
+				data-lanes = <1 2 3 4>;
+				clock-lanes = <0>;
+			};
+		};
+	};
+};
+
+&dphy_rx {
+	status = "okay";
+};
+
+&mipi_csi0 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+
+			mipi_csi0_ep: endpoint {
+				remote-endpoint = <&os08a20_mipi_0_ep>;
+				data-lanes = <1 2 3 4>;
+				clock-lanes = <0>;
+			};
+		};
+
+		port@1 {
+			reg = <1>;
+
+			mipi_csi0_out: endpoint {
+				remote-endpoint = <&formatter_0_in>;
+			};
+		};
+	};
+};
+
+&csi_pixel_formatter_0 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+
+			formatter_0_in: endpoint {
+				remote-endpoint = <&mipi_csi0_out>;
+			};
+		};
+
+		port@1 {
+			reg = <1>;
+
+			formatter_0_out: endpoint {
+				remote-endpoint = <&isi_in_2>;
+			};
+		};
+	};
+};
+
+&isi {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@2 {
+			reg = <2>;
+
+			isi_in_2: endpoint {
+				remote-endpoint = <&formatter_0_out>;
+			};
+		};
+	};
+};
