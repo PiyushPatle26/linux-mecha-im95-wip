@@ -107,10 +107,11 @@ static void *nxpwifi_cfg80211_get_adapter(struct wiphy *wiphy)
 
 /* cfg80211 operation handler to delete a network key. */
 static int
-nxpwifi_cfg80211_del_key(struct wiphy *wiphy, struct net_device *netdev,
+nxpwifi_cfg80211_del_key(struct wiphy *wiphy, struct wireless_dev *wdev,
 			 int link_id, u8 key_index, bool pairwise,
 			 const u8 *mac_addr)
 {
+	struct net_device *netdev = wdev->netdev;
 	struct nxpwifi_private *priv = nxpwifi_netdev_get_priv(netdev);
 	static const u8 bc_mac[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 	const u8 *peer_mac = pairwise ? mac_addr : bc_mac;
@@ -437,10 +438,11 @@ nxpwifi_cfg80211_set_default_key(struct wiphy *wiphy, struct net_device *netdev,
 
 /* cfg80211 operation handler to add a network key. */
 static int
-nxpwifi_cfg80211_add_key(struct wiphy *wiphy, struct net_device *netdev,
+nxpwifi_cfg80211_add_key(struct wiphy *wiphy, struct wireless_dev *wdev,
 			 int link_id, u8 key_index, bool pairwise,
 			 const u8 *mac_addr, struct key_params *params)
 {
+	struct net_device *netdev = wdev->netdev;
 	struct nxpwifi_private *priv = nxpwifi_netdev_get_priv(netdev);
 	struct nxpwifi_wep_key *wep_key;
 	u8 bc_mac[ETH_ALEN];
@@ -477,7 +479,7 @@ nxpwifi_cfg80211_add_key(struct wiphy *wiphy, struct net_device *netdev,
 /* cfg80211 operation handler to set default mgmt key. */
 static int
 nxpwifi_cfg80211_set_default_mgmt_key(struct wiphy *wiphy,
-				      struct net_device *netdev,
+				      struct wireless_dev *wdev,
 				      int link_id,
 				      u8 key_index)
 {
@@ -1225,9 +1227,10 @@ done:
  * requested station information, if available.
  */
 static int
-nxpwifi_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
+nxpwifi_cfg80211_get_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 			     const u8 *mac, struct station_info *sinfo)
 {
+	struct net_device *dev = wdev->netdev;
 	struct nxpwifi_private *priv = nxpwifi_netdev_get_priv(dev);
 	struct nxpwifi_sta_node *node;
 
@@ -1247,9 +1250,10 @@ nxpwifi_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
 
 /* cfg80211 operation handler to dump station information. */
 static int
-nxpwifi_cfg80211_dump_station(struct wiphy *wiphy, struct net_device *dev,
+nxpwifi_cfg80211_dump_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 			      int idx, u8 *mac, struct station_info *sinfo)
 {
+	struct net_device *dev = wdev->netdev;
 	struct nxpwifi_private *priv = nxpwifi_netdev_get_priv(dev);
 	struct nxpwifi_sta_node *node;
 	struct nxpwifi_sta_node *found = NULL;
@@ -1583,9 +1587,10 @@ int nxpwifi_cfg80211_change_beacon(struct wiphy *wiphy,
  * associated stations list, no action is taken.
  */
 static int
-nxpwifi_cfg80211_del_station(struct wiphy *wiphy, struct net_device *dev,
+nxpwifi_cfg80211_del_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 			     struct station_del_parameters *params)
 {
+	struct net_device *dev = wdev->netdev;
 	struct nxpwifi_private *priv = nxpwifi_netdev_get_priv(dev);
 	struct nxpwifi_sta_node *sta_node;
 	u8 deauth_mac[ETH_ALEN];
@@ -3193,9 +3198,10 @@ nxpwifi_cfg80211_uap_add_station(struct nxpwifi_private *priv, const u8 *mac,
 }
 
 static int
-nxpwifi_cfg80211_add_station(struct wiphy *wiphy, struct net_device *dev,
+nxpwifi_cfg80211_add_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 			     const u8 *mac, struct station_parameters *params)
 {
+	struct net_device *dev = wdev->netdev;
 	struct nxpwifi_private *priv = nxpwifi_netdev_get_priv(dev);
 	int ret = -EOPNOTSUPP;
 
@@ -3422,7 +3428,7 @@ nxpwifi_cfg80211_start_radar_detection(struct wiphy *wiphy,
 }
 
 static int
-nxpwifi_cfg80211_change_station(struct wiphy *wiphy, struct net_device *dev,
+nxpwifi_cfg80211_change_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 				const u8 *mac,
 				struct station_parameters *params)
 {
