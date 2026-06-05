@@ -305,7 +305,6 @@ static int fsl_ldb_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *panel_node;
 	struct device_node *remote1, *remote2;
-	struct drm_panel *panel;
 	struct fsl_ldb *fsl_ldb;
 	int dual_link, idx, ret;
 
@@ -362,15 +361,14 @@ static int fsl_ldb_probe(struct platform_device *pdev)
 		fsl_ldb_is_dual(fsl_ldb) ? "dual-link mode" :
 		fsl_ldb->ch0_enabled ? "channel 0" : "channel 1");
 
-	panel = of_drm_find_panel(panel_node);
 	of_node_put(panel_node);
-	if (IS_ERR(panel))
-		return PTR_ERR(panel);
 
 	if (of_property_present(dev->of_node, "nxp,enable-termination-resistor"))
 		fsl_ldb->use_termination_resistor = true;
 
-	fsl_ldb->panel_bridge = devm_drm_panel_bridge_add(dev, panel);
+	/* downstream may be a panel or a bridge (e.g. i.MX95 IT6263) */
+	fsl_ldb->panel_bridge = devm_drm_of_get_bridge(dev, dev->of_node,
+						       fsl_ldb->ch0_enabled ? 1 : 2, 0);
 	if (IS_ERR(fsl_ldb->panel_bridge))
 		return PTR_ERR(fsl_ldb->panel_bridge);
 
