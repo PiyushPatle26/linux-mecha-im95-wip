@@ -333,6 +333,7 @@ static struct clk_hw *_of_fixed_factor_clk_setup(struct device_node *node)
 	struct clk_hw *hw;
 	const char *clk_name = node->name;
 	const struct clk_parent_data pdata = { .index = 0 };
+	unsigned long flags = 0;
 	u32 div, mult;
 	int ret;
 
@@ -350,8 +351,11 @@ static struct clk_hw *_of_fixed_factor_clk_setup(struct device_node *node)
 
 	of_property_read_string(node, "clock-output-names", &clk_name);
 
+	if (of_property_read_bool(node, "set-rate-parent"))
+		flags |= CLK_SET_RATE_PARENT;
+
 	hw = __clk_hw_register_fixed_factor(NULL, node, clk_name, NULL, NULL,
-					    &pdata, 0, mult, div, 0, 0, false);
+					    &pdata, flags, mult, div, 0, 0, false);
 	if (IS_ERR(hw)) {
 		/*
 		 * Clear OF_POPULATED flag so that clock registration can be
