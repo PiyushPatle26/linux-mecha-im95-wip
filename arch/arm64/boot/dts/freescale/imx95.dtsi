@@ -26,6 +26,7 @@
 		clock-div = <7>;
 		clock-mult = <1>;
 		clock-output-names = "ldb_pll_div7";
+		set-rate-parent;
 	};
 
 	display_pixel_link_0: pixel-link-0 {
