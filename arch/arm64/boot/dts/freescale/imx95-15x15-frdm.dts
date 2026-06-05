@@ -282,12 +282,10 @@
 };
 
 /*
- * Display pipeline, LVDS channel 1 -> IT6263 LVDS-to-HDMI bridge -> HDMI:
- *   dpu(disp1) -> pixel_interleaver_1 -> display_pixel_link_1
- *              -> lvds_ch1 -> ldb1 -> it6263 -> hdmi-connector
- * SoC nodes follow the upstream "Add i.MX95 DPU/DSI/LVDS support" series
- * (fsl,imx95-dc / fsl,imx95-lvds / fsl,imx95-ldb); the matching DC/LDB drivers
- * from that series must be applied for this pipeline to bind.
+ * IT6263 LVDS-to-HDMI bridge on LVDS channel 1:
+ *   dpu(disp0) -> pixel_interleaver_0 -> display_pixel_link_0
+ *             -> lvds_ch1 -> ldb1 -> it6263 -> hdmi-connector
+ * disp0 is used because the disp1 engine is not powered by the SM firmware.
  */
 &dpu {
 	status = "okay";
@@ -297,8 +295,17 @@
 	status = "okay";
 };
 
-&display_pixel_link_1 {
+&display_pixel_link_0 {
 	status = "okay";
+};
+
+/* Cross-wire the disp0 pixel-link LVDS output to channel 1 (IT6263 on ch1). */
+&display_pixel_link0_to_lvds_ch0 {
+	remote-endpoint = <&lvds_ch1_to_display_pixel_link1>;
+};
+
+&lvds_ch1_to_display_pixel_link1 {
+	remote-endpoint = <&display_pixel_link0_to_lvds_ch0>;
 };
 
 &enetc_port0 {
@@ -341,6 +348,10 @@
 };
 
 &lvds {
+	/* Pin the LDB PLL VCO; SCMI only varies the integer post-divider. */
+	assigned-clocks = <&scmi_clk IMX95_CLK_LDBPLL_VCO>,
+			  <&scmi_clk IMX95_CLK_LDBPLL>;
+	assigned-clock-rates = <4158000000>, <1039500000>;
 	status = "okay";
 };
 
@@ -509,12 +520,14 @@
 	bridge@4c {
 		compatible = "ite,it6263";
 		reg = <0x4c>;
+		data-mapping = "jeida-24";
 		reset-gpios = <&pcal6524 23 GPIO_ACTIVE_LOW>;
 
 		ports {
 			#address-cells = <1>;
 			#size-cells = <0>;
 
+			/* port@0 = LVDS input, port@2 = HDMI output (mainline binding) */
 			port@0 {
 				reg = <0>;
 
@@ -523,8 +536,8 @@
 				};
 			};
 
-			port@1 {
-				reg = <1>;
+			port@2 {
+				reg = <2>;
 
 				it6263_out: endpoint {
 					remote-endpoint = <&hdmi_connector_in>;
@@ -661,7 +674,7 @@
 	status = "okay";
 };
 
-&pixel_interleaver_1 {
+&pixel_interleaver_0 {
 	status = "okay";
 };
 
