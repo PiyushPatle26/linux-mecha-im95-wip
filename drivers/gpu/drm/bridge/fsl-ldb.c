@@ -263,11 +263,22 @@ fsl_ldb_atomic_get_input_bus_fmts(struct drm_bridge *bridge,
 		return NULL;
 
 	if (of_device_is_compatible(fsl_ldb->dev->of_node, "fsl,imx95-ldb")) {
-		input_fmts[0] = MEDIA_BUS_FMT_RGB666_1X7X3_SPWG;
-		input_fmts[1] = MEDIA_BUS_FMT_RGB888_1X7X4_SPWG;
-		input_fmts[2] = MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA;
-		input_fmts[3] = MEDIA_BUS_FMT_FIXED;
-		*num_input_fmts = 4;
+		/* serializer keeps the mapping: input must match the output */
+		switch (output_fmt) {
+		case MEDIA_BUS_FMT_RGB666_1X7X3_SPWG:
+		case MEDIA_BUS_FMT_RGB888_1X7X4_SPWG:
+		case MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA:
+			input_fmts[0] = output_fmt;
+			*num_input_fmts = 1;
+			break;
+		default:
+			input_fmts[0] = MEDIA_BUS_FMT_RGB666_1X7X3_SPWG;
+			input_fmts[1] = MEDIA_BUS_FMT_RGB888_1X7X4_SPWG;
+			input_fmts[2] = MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA;
+			input_fmts[3] = MEDIA_BUS_FMT_FIXED;
+			*num_input_fmts = 4;
+			break;
+		}
 	} else {
 		input_fmts[0] = MEDIA_BUS_FMT_RGB888_1X24;
 		*num_input_fmts = 1;
