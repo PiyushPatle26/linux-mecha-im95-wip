@@ -34,6 +34,8 @@
 
 struct imx95_ldb_channel {
 	struct ldb_channel base;
+	/* display interface (DI0/DI1) feeding this serializer channel */
+	u32 di;
 };
 
 struct imx95_ldb {
@@ -56,6 +58,32 @@ static inline struct imx95_ldb *base_to_imx95_ldb(struct ldb *base)
 	return container_of(base, struct imx95_ldb, base);
 }
 
+/* DI feeding @ldb_ch, taken from the wired pixel-link's dc-stream-id */
+static u32 imx95_ldb_channel_get_di(struct ldb_channel *ldb_ch)
+{
+	struct device_node *ep, *pl;
+	u32 di = ldb_ch->chno;
+	u8 stream_id;
+
+	if (!ldb_ch->np)
+		return di;
+
+	ep = of_graph_get_endpoint_by_regs(ldb_ch->np, 0, -1);
+	if (!ep)
+		return di;
+
+	pl = of_graph_get_remote_port_parent(ep);
+	of_node_put(ep);
+	if (!pl)
+		return di;
+
+	if (!of_property_read_u8(pl, "fsl,dc-stream-id", &stream_id))
+		di = stream_id;
+	of_node_put(pl);
+
+	return di;
+}
+
 static int imx95_ldb_bridge_atomic_check(struct drm_bridge *bridge,
 					 struct drm_bridge_state *bridge_state,
 					 struct drm_crtc_state *crtc_state,
@@ -73,6 +101,7 @@ imx95_ldb_bridge_mode_set(struct drm_bridge *bridge,
 	struct ldb_channel *ldb_ch = bridge->driver_private;
 	struct ldb *ldb = ldb_ch->ldb;
 	struct imx95_ldb *imx95_ldb = base_to_imx95_ldb(ldb);
+	u32 di = base_to_imx95_ldb_channel(ldb_ch)->di;
 	struct device *dev = imx95_ldb->dev;
 	unsigned long di_clk = adjusted_mode->clock * 1000;
 	bool is_split = ldb_channel_is_split_link(ldb_ch);
@@ -83,11 +112,11 @@ imx95_ldb_bridge_mode_set(struct drm_bridge *bridge,
 		dev_err(dev, "failed to get runtime PM sync: %d\n", ret);
 
 	/* set lvds di clock rate */
-	clk_set_rate(imx95_ldb->clk_di[ldb_ch->chno], di_clk);
+	clk_set_rate(imx95_ldb->clk_di[di], di_clk);
 
 	ldb->ldb_ctrl |= LDB_VSYNC_ADJ_EN;
 
-	if (ldb_ch->chno == 0 || is_split) {
+	if (di == 0 || is_split) {
 		if (adjusted_mode->flags & DRM_MODE_FLAG_NVSYNC)
 			ldb->ldb_ctrl |= LDB_DI0_VS_POL_ACT_LOW;
 		else if (adjusted_mode->flags & DRM_MODE_FLAG_PVSYNC)
@@ -98,7 +127,7 @@ imx95_ldb_bridge_mode_set(struct drm_bridge *bridge,
 		else if (adjusted_mode->flags & DRM_MODE_FLAG_PHSYNC)
 			ldb->ldb_ctrl &= ~LDB_DI0_HS_POL_ACT_LOW;
 	}
-	if (ldb_ch->chno == 1 || is_split) {
+	if (di == 1 || is_split) {
 		if (adjusted_mode->flags & DRM_MODE_FLAG_NVSYNC)
 			ldb->ldb_ctrl |= LDB_DI1_VS_POL_ACT_LOW;
 		else if (adjusted_mode->flags & DRM_MODE_FLAG_PVSYNC)
@@ -120,22 +149,24 @@ imx95_ldb_bridge_atomic_enable(struct drm_bridge *bridge,
 	struct ldb_channel *ldb_ch = bridge->driver_private;
 	struct ldb *ldb = ldb_ch->ldb;
 	struct imx95_ldb *imx95_ldb = base_to_imx95_ldb(ldb);
+	u32 di = base_to_imx95_ldb_channel(ldb_ch)->di;
 	bool is_split = ldb_channel_is_split_link(ldb_ch);
 
 	clk_prepare_enable(imx95_ldb->clk_ch[ldb_ch->chno]);
-	clk_prepare_enable(imx95_ldb->clk_di[ldb_ch->chno]);
+	clk_prepare_enable(imx95_ldb->clk_di[di]);
 	if (is_split) {
 		clk_prepare_enable(imx95_ldb->clk_ch[ldb_ch->chno ^ 1]);
-		clk_prepare_enable(imx95_ldb->clk_di[ldb_ch->chno ^ 1]);
+		clk_prepare_enable(imx95_ldb->clk_di[di ^ 1]);
 	}
 
 	if (ldb_ch->chno == 0 || is_split) {
 		ldb->ldb_ctrl &= ~LDB_CH0_MODE_EN_MASK;
-		ldb->ldb_ctrl |= LDB_CH0_MODE_EN_TO_DI0;
+		ldb->ldb_ctrl |= (di == 1 && !is_split) ?
+			       LDB_CH0_MODE_EN_TO_DI1 : LDB_CH0_MODE_EN_TO_DI0;
 	}
 	if (ldb_ch->chno == 1 || is_split) {
 		ldb->ldb_ctrl &= ~LDB_CH1_MODE_EN_MASK;
-		ldb->ldb_ctrl |= is_split ?
+		ldb->ldb_ctrl |= (is_split || di == 0) ?
 			       LDB_CH1_MODE_EN_TO_DI0 : LDB_CH1_MODE_EN_TO_DI1;
 	}
 
@@ -155,10 +186,9 @@ imx95_ldb_bridge_atomic_disable(struct drm_bridge *bridge,
 	struct ldb_channel *ldb_ch = bridge->driver_private;
 	struct ldb *ldb = ldb_ch->ldb;
 	struct imx95_ldb *imx95_ldb = base_to_imx95_ldb(ldb);
+	u32 di = base_to_imx95_ldb_channel(ldb_ch)->di;
 	struct device *dev = imx95_ldb->dev;
 	bool is_split = ldb_channel_is_split_link(ldb_ch);
-	int ret;
-
 	ldb_bridge_disable_helper(bridge);
 
 	if (is_split) {
@@ -167,15 +197,13 @@ imx95_ldb_bridge_atomic_disable(struct drm_bridge *bridge,
 	}
 
 	if (is_split) {
-		clk_disable_unprepare(imx95_ldb->clk_di[ldb_ch->chno ^ 1]);
+		clk_disable_unprepare(imx95_ldb->clk_di[di ^ 1]);
 		clk_disable_unprepare(imx95_ldb->clk_ch[ldb_ch->chno ^ 1]);
 	}
-	clk_disable_unprepare(imx95_ldb->clk_di[ldb_ch->chno]);
+	clk_disable_unprepare(imx95_ldb->clk_di[di]);
 	clk_disable_unprepare(imx95_ldb->clk_ch[ldb_ch->chno]);
 
-	ret = pm_runtime_put(dev);
-	if (ret < 0)
-		dev_err(dev, "failed to put runtime PM: %d\n", ret);
+	pm_runtime_put(dev);
 }
 
 static const u32 imx95_ldb_bus_output_fmts[] = {
@@ -288,9 +316,11 @@ imx95_ldb_bridge_mode_valid(struct drm_bridge *bridge,
 
 	if ((next_bridge->ops & DRM_BRIDGE_OP_DETECT) &&
 	    (next_bridge->ops & DRM_BRIDGE_OP_EDID)) {
-		if (imx95_ldb->clk_di[ldb_ch->chno]) {
+		u32 di = base_to_imx95_ldb_channel(ldb_ch)->di;
+
+		if (imx95_ldb->clk_di[di]) {
 			pixel_clock_rate = mode->clock * 1000;
-			rounded_rate = clk_round_rate(imx95_ldb->clk_di[ldb_ch->chno],
+			rounded_rate = clk_round_rate(imx95_ldb->clk_di[di],
 						      pixel_clock_rate);
 			if (rounded_rate != pixel_clock_rate)
 				return MODE_CLOCK_RANGE;
@@ -369,6 +399,10 @@ static int imx95_ldb_probe(struct platform_device *pdev)
 	ret = ldb_init_helper(ldb);
 	if (ret)
 		return ret;
+
+	for (i = 0; i < MAX_LDB_CHAN_NUM; i++)
+		imx95_ldb->channel[i]->di =
+			imx95_ldb_channel_get_di(&imx95_ldb->channel[i]->base);
 
 	if (ldb->available_ch_cnt == 0) {
 		dev_dbg(dev, "no available channel\n");
