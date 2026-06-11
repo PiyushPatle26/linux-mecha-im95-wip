@@ -197,9 +197,7 @@ static void imx95_ldb_bridge_atomic_disable(struct drm_bridge *bridge,
 	clk_disable_unprepare(imx95_ldb->clk_di[ldb_ch->chno]);
 	clk_disable_unprepare(imx95_ldb->clk_ch[ldb_ch->chno]);
 
-	ret = pm_runtime_put(dev);
-	if (ret < 0)
-		dev_err(dev, "failed to put runtime PM: %d\n", ret);
+	pm_runtime_put(dev);
 }
 
 static const u32 imx95_ldb_bus_output_fmts[] = {

@@ -30,17 +30,6 @@
 #define  DISPLAY_ARQOS_MASK		0x7
 #define  DISPLAY_ARQOS(n)		((n) & 0x7)
 
-static inline u32 dpu95_comctrl_irq_read(struct dpu95_soc *dpu, unsigned int offset)
-{
-	return readl(dpu->comctrl_irq_reg + offset);
-}
-
-static inline void dpu95_comctrl_irq_write(struct dpu95_soc *dpu,
-					 unsigned int offset, u32 value)
-{
-	writel(value, dpu->comctrl_irq_reg + offset);
-}
-
 static inline u32 dpu95_disp_irq0_read(struct dpu95_soc *dpu, unsigned int offset)
 {
 	return readl(dpu->disp_irq0_reg + offset);

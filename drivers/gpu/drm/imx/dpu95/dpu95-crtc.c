@@ -168,12 +168,7 @@ static int dpu95_crtc_pm_runtime_resume_and_get(struct dpu95_crtc *dpu_crtc)
 
 static void dpu95_crtc_pm_runtime_put(struct dpu95_crtc *dpu_crtc)
 {
-	int ret;
-
-	ret = pm_runtime_put(dpu_crtc->dpu->dev);
-	if (ret < 0)
-		dpu95_crtc_err(&dpu_crtc->base,
-			       "failed to put device RPM: %d\n", ret);
+	pm_runtime_put(dpu_crtc->dpu->dev);
 }
 
 static void dpu95_crtc_mode_set_nofb(struct drm_crtc *crtc)

@@ -341,9 +341,9 @@ static void dpu95_atomic_put_plane_state(struct drm_atomic_state *state,
 {
 	int index = drm_plane_index(plane);
 
-	plane->funcs->atomic_destroy_state(plane, state->planes[index].state);
+	plane->funcs->atomic_destroy_state(plane, state->planes[index].state_to_destroy);
 	state->planes[index].ptr = NULL;
-	state->planes[index].state = NULL;
+	state->planes[index].state_to_destroy = NULL;
 	state->planes[index].old_state = NULL;
 	state->planes[index].new_state = NULL;
 
@@ -357,9 +357,9 @@ static void dpu95_atomic_put_crtc_state(struct drm_atomic_state *state,
 {
 	int index = drm_crtc_index(crtc);
 
-	crtc->funcs->atomic_destroy_state(crtc, state->crtcs[index].state);
+	crtc->funcs->atomic_destroy_state(crtc, state->crtcs[index].state_to_destroy);
 	state->crtcs[index].ptr = NULL;
-	state->crtcs[index].state = NULL;
+	state->crtcs[index].state_to_destroy = NULL;
 	state->crtcs[index].old_state = NULL;
 	state->crtcs[index].new_state = NULL;
 
