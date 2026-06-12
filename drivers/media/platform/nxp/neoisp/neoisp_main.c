@@ -9,6 +9,7 @@
  */
 
 #include <linux/clk.h>
+#include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
@@ -40,6 +41,10 @@
 static int standalone_mdev;
 module_param_named(standalone_mdev, standalone_mdev, uint, 0644);
 MODULE_PARM_DESC(standalone_mdev, " Create standalone neoisp media device, default is 0 (off)");
+
+static int enable_debugfs;
+module_param_named(enable_debugfs, enable_debugfs, uint, 0644);
+MODULE_PARM_DESC(enable_debugfs, " Turn on/off debugfs, default is 0 (off)");
 
 static inline bool node_desc_is_output(const struct neoisp_node_desc_s *desc)
 {
@@ -1766,9 +1771,18 @@ static int neoisp_probe(struct platform_device *pdev)
 	neoisp_init_hw(neoispd);
 	neoisp_set_default_context(neoispd);
 
+	if (enable_debugfs) {
+		neoisp_debugfs_init(neoispd);
+		/* Increase pm_runtime counter to prevent suspend */
+		ret = pm_runtime_resume_and_get(dev);
+		if (ret)
+			goto err_pm_runtime_suspend;
+	}
+
 	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 
+	dev_dbg(dev, "probe: done (%d) debugfs (%x)\n", ret, enable_debugfs);
 	return 0;
 
 err_pm_runtime_suspend:
@@ -1784,6 +1798,11 @@ err_irq:
 static void neoisp_remove(struct platform_device *pdev)
 {
 	struct neoisp_dev_s *neoispd = platform_get_drvdata(pdev);
+
+	if (neoispd->regset) {
+		neoisp_debugfs_exit(neoispd);
+		pm_runtime_put(neoispd->dev);
+	}
 
 	neoisp_destroy_devices(neoispd);
 
