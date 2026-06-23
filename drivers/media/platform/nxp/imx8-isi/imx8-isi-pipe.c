@@ -232,6 +232,50 @@ static inline struct mxc_isi_pipe *to_isi_pipe(struct v4l2_subdev *sd)
 	return container_of(sd, struct mxc_isi_pipe, sd);
 }
 
+static int mxc_isi_get_vc(struct mxc_isi_pipe *pipe)
+{
+	struct mxc_isi_crossbar *xbar = &pipe->isi->crossbar;
+	struct device *dev = pipe->isi->dev;
+	struct v4l2_mbus_frame_desc source_fd;
+	struct v4l2_mbus_frame_desc_entry *entry = NULL;
+	unsigned int i;
+	int ret;
+
+	ret = v4l2_subdev_call(&xbar->sd, pad, get_frame_desc,
+			       xbar->num_sinks + pipe->id, &source_fd);
+	if (ret < 0) {
+		dev_err(dev, "Failed to get source frame desc from pad %u\n",
+			xbar->num_sinks + pipe->id);
+		return ret;
+	}
+
+	for (i = 0; i < source_fd.num_entries; i++) {
+		if (source_fd.entry[i].stream == 0) {
+			entry = &source_fd.entry[i];
+			break;
+		}
+	}
+
+	if (source_fd.num_entries == 0) {
+		pipe->vc = 0;
+		return 0;
+	}
+
+	if (!entry) {
+		dev_err(dev, "Failed to find stream from source frame desc\n");
+		return -EPIPE;
+	}
+
+	if (entry->bus.csi2.vc > pipe->isi->pdata->num_channels) {
+		dev_err(dev, "Virtual channel(%d) out of range\n",
+			entry->bus.csi2.vc);
+		return -EINVAL;
+	}
+
+	pipe->vc = entry->bus.csi2.vc;
+	return 0;
+}
+
 int mxc_isi_pipe_enable(struct mxc_isi_pipe *pipe)
 {
 	struct mxc_isi_crossbar *xbar = &pipe->isi->crossbar;
@@ -257,8 +301,12 @@ int mxc_isi_pipe_enable(struct mxc_isi_pipe *pipe)
 						    0, &input, NULL);
 	v4l2_subdev_unlock_state(state);
 
-	if (ret)
+	if (ret) {
+		dev_err(pipe->isi->dev,
+			"pipe %u: no route for source pad %u stream 0\n",
+			pipe->id, xbar->num_sinks + pipe->id);
 		return -EPIPE;
+	}
 
 	/* Configure the pipeline. */
 	state = v4l2_subdev_lock_and_get_active_state(sd);
@@ -279,6 +327,10 @@ int mxc_isi_pipe_enable(struct mxc_isi_pipe *pipe)
 	scale.height = compose->height;
 
 	v4l2_subdev_unlock_state(state);
+
+	ret = mxc_isi_get_vc(pipe);
+	if (ret)
+		return ret;
 
 	/* Configure the ISI channel. */
 	mxc_isi_channel_config(pipe, input, &in_size, &scale, &crop,
@@ -848,6 +900,8 @@ int mxc_isi_pipe_acquire(struct mxc_isi_pipe *pipe,
 	bypass = sink_fmt->width == src_fmt->width &&
 		 sink_fmt->height == src_fmt->height &&
 		 sink_info->encoding == src_info->encoding;
+
+	pipe->bypass = bypass;
 
 	ret = mxc_isi_channel_acquire(pipe, irq_handler, bypass);
 	if (ret)

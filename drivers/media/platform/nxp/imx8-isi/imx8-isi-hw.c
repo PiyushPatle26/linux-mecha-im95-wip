@@ -94,6 +94,18 @@ void mxc_isi_channel_m2m_start(struct mxc_isi_pipe *pipe)
 	mxc_isi_write(pipe, CHNL_MEM_RD_CTRL, val);
 }
 
+void mxc_isi_channel_set_max_size(struct mxc_isi_pipe *pipe,
+				  const struct v4l2_pix_format_mplane *pix,
+				  const bool buf_max_size)
+{
+	if (!buf_max_size)
+		return;
+
+	mxc_isi_write(pipe, CHNL_OUT_BUF_MAX_SIZE_Y, pix->plane_fmt[0].sizeimage);
+	mxc_isi_write(pipe, CHNL_OUT_BUF_MAX_SIZE_U, pix->plane_fmt[1].sizeimage);
+	mxc_isi_write(pipe, CHNL_OUT_BUF_MAX_SIZE_V, pix->plane_fmt[2].sizeimage);
+}
+
 /* -----------------------------------------------------------------------------
  * Pipeline configuration
  */
@@ -112,7 +124,7 @@ static u32 mxc_isi_channel_scaling_ratio(unsigned int from, unsigned int to,
 	else
 		*dec = 8;
 
-	return min_t(u32, from * 0x1000 / (to * *dec), ISI_DOWNSCALE_THRESHOLD);
+	return min_t(u32, DIV_ROUND_UP(from * 0x1000, to * *dec), ISI_DOWNSCALE_THRESHOLD);
 }
 
 static void mxc_isi_channel_set_scaling(struct mxc_isi_pipe *pipe,
@@ -309,8 +321,8 @@ static void mxc_isi_channel_set_control(struct mxc_isi_pipe *pipe,
 
 	val = mxc_isi_read(pipe, CHNL_CTRL);
 	val &= ~(CHNL_CTRL_CHNL_BYPASS | CHNL_CTRL_CHAIN_BUF_MASK |
-		 CHNL_CTRL_SRC_TYPE_MASK | CHNL_CTRL_MIPI_VC_ID_MASK |
-		 CHNL_CTRL_SRC_INPUT_MASK);
+		 CHNL_CTRL_BLANK_PXL_MASK | CHNL_CTRL_SRC_TYPE_MASK |
+		 CHNL_CTRL_MIPI_VC_ID_MASK | CHNL_CTRL_SRC_INPUT_MASK);
 
 	/*
 	 * If no scaling or color space conversion is needed, bypass the
@@ -338,7 +350,8 @@ static void mxc_isi_channel_set_control(struct mxc_isi_pipe *pipe,
 	} else {
 		val |= CHNL_CTRL_SRC_TYPE(CHNL_CTRL_SRC_TYPE_DEVICE);
 		val |= CHNL_CTRL_SRC_INPUT(input);
-		val |= CHNL_CTRL_MIPI_VC_ID(0); /* FIXME: For CSI-2 only */
+		val |= CHNL_CTRL_MIPI_VC_ID(pipe->vc & 0x3);
+		val |= CHNL_CTRL_VC_ID_1((pipe->vc >> 2) & 0x1);
 	}
 
 	mxc_isi_write(pipe, CHNL_CTRL, val);
@@ -361,6 +374,10 @@ void mxc_isi_channel_config(struct mxc_isi_pipe *pipe,
 	mxc_isi_write(pipe, CHNL_IMG_CFG,
 		      CHNL_IMG_CFG_HEIGHT(in_size->height) |
 		      CHNL_IMG_CFG_WIDTH(in_size->width));
+
+	/* temp, will verify with imx95 */
+	if (pipe->isi->pdata->raw32_chan_cfg)
+		mxc_isi_write(pipe, CHNL_IMG_CFG2, in_size->width);
 
 	/* Scaling */
 	mxc_isi_channel_set_scaling(pipe, in_encoding, in_size, scale,

@@ -607,6 +607,7 @@ static void mxc_isi_video_frame_write_done(struct mxc_isi_pipe *pipe,
 	}
 
 	mxc_isi_channel_set_outbuf(pipe, next_buf->dma_addrs, buf_id);
+	mxc_isi_channel_set_max_size(pipe, &video->pix, pipe->isi->pdata->buf_max_size);
 	next_buf->id = buf_id;
 
 	/*
@@ -796,6 +797,7 @@ static void mxc_isi_video_queue_first_buffers(struct mxc_isi_video *video)
 		buf = list_first_entry(list, struct mxc_isi_buffer, list);
 
 		mxc_isi_channel_set_outbuf(video->pipe, buf->dma_addrs, buf_id);
+		mxc_isi_channel_set_max_size(video->pipe, &video->pix, video->pipe->isi->pdata->buf_max_size);
 		buf->id = buf_id;
 		list_move_tail(&buf->list, &video->out_active);
 	}
@@ -1410,7 +1412,7 @@ int mxc_isi_video_register(struct mxc_isi_pipe *pipe,
 	q->mem_ops = &vb2_dma_contig_memops;
 	q->buf_struct_size = sizeof(struct mxc_isi_buffer);
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
-	q->min_queued_buffers = 0;
+	q->min_queued_buffers = 2;
 	q->lock = &video->lock;
 	q->dev = pipe->isi->dev;
 
