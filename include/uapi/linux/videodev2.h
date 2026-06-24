@@ -880,6 +880,12 @@ struct v4l2_pix_format {
 #define V4L2_META_FMT_C3ISP_PARAMS	v4l2_fourcc('C', '3', 'P', 'M') /* Amlogic C3 ISP Parameters */
 #define V4L2_META_FMT_C3ISP_STATS	v4l2_fourcc('C', '3', 'S', 'T') /* Amlogic C3 ISP Statistics */
 
+/* Vendor specific - used for NXP NEO ISP */
+#define V4L2_META_FMT_NEO_ISP_PARAMS	v4l2_fourcc('N', 'N', 'P', 'M') /* NXP NEOISP Parameters */
+#define V4L2_META_FMT_NEO_ISP_EXT_PARAMS	v4l2_fourcc('N', 'N', 'E', 'P') /* NXP NEOISP Extensible Parameters */
+#define V4L2_META_FMT_NEO_ISP_STATS	v4l2_fourcc('N', 'N', 'S', 'T') /* NXP NEOISP Statistics */
+#define V4L2_META_FMT_NEO_ISP_EXT_STATS	v4l2_fourcc('N', 'N', 'E', 'S') /* NXP NEOISP Extensible Statistics */
+
 /* Vendor specific - used for RaspberryPi PiSP */
 #define V4L2_META_FMT_RPI_BE_CFG	v4l2_fourcc('R', 'P', 'B', 'C') /* PiSP BE configuration */
 #define V4L2_META_FMT_RPI_FE_CFG	v4l2_fourcc('R', 'P', 'F', 'C') /* PiSP FE configuration */
