@@ -27,11 +27,16 @@ properties:
     maxItems: 1
 
   clocks:
-    maxItems: 1
+    items:
+      - description: AXI bus clock
+      - description: pixel clock
+      - description: ISP core clock
 
   clock-names:
     items:
-      - const: camcm0
+      - const: camblk_isp_axi
+      - const: camblk_isp_pixel
+      - const: camblk_isp
 
   power-domains:
     maxItems: 1
@@ -56,7 +61,7 @@ examples:
               <0x4afe0000 0x10000>;
         interrupts = <GIC_SPI 222 IRQ_TYPE_LEVEL_HIGH>;
         interrupt-parent = <&gic>;
-        clocks = <&scmi_clk 64>; /* IMX95_CLK_CAMCM0 */
-        clock-names = "camcm0";
+        clocks = <&cameramix_csr 0>, <&cameramix_csr 1>, <&cameramix_csr 2>;
+        clock-names = "camblk_isp_axi", "camblk_isp_pixel", "camblk_isp";
         power-domains = <&scmi_devpd 3>; /* IMX95_PD_CAMERA */
     };
