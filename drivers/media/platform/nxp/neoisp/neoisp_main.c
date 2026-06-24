@@ -1582,7 +1582,7 @@ static void neoisp_destroy_devices(struct neoisp_dev_s *neoispd)
 
 	v4l2_device_unregister(&neoispd->v4l2_dev);
 
-	if (standalone_mdev)
+	if (neoispd->standalone)
 		media_device_unregister(&neoispd->mdev);
 	else if (!neoispd->media_registered)
 		return;
@@ -1610,7 +1610,7 @@ int neoisp_core_media_register(struct device *dev, struct v4l2_subdev *sd)
 	if (!neoispd)
 		return -EINVAL;
 
-	if (neoispd->media_registered || standalone_mdev)
+	if (neoispd->media_registered || neoispd->standalone)
 		return 0;
 
 	ret = neoisp_init_group(neoispd, mdev);
@@ -1646,7 +1646,7 @@ static int neoisp_init_devices(struct neoisp_dev_s *neoispd)
 		return -ENOMEM;
 	}
 
-	if (!standalone_mdev)
+	if (!neoispd->standalone)
 		return 0;
 
 	/* Prepare neoisp media device in standalone mode only */
@@ -1720,6 +1720,11 @@ static int neoisp_probe(struct platform_device *pdev)
 
 	neoispd->dev = dev;
 	neoispd->info = (struct neoisp_info_s *)of_device_get_match_data(dev);
+	/*
+	 * Latch the standalone mode for this device so that teardown matches
+	 * setup even if the module parameter is changed at runtime.
+	 */
+	neoispd->standalone = standalone_mdev;
 
 	ret = devm_clk_bulk_get_all(dev, &neoispd->clks);
 	if (ret < 0) {
@@ -1806,7 +1811,7 @@ static void neoisp_remove(struct platform_device *pdev)
 
 	neoisp_destroy_devices(neoispd);
 
-	if (standalone_mdev)
+	if (neoispd->standalone)
 		media_device_cleanup(&neoispd->mdev);
 
 	pm_runtime_dont_use_autosuspend(neoispd->dev);

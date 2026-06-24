@@ -205,6 +205,7 @@ struct neoisp_dev_s {
 	struct neoisp_job_s queued_job;
 	bool hw_busy; /* Non-zero if a job is queued or is being started */
 	u8 media_registered;
+	bool standalone; /* latched from the standalone_mdev module param at probe */
 	struct list_head job_queue;
 	/* Protects "hw_busy" flag, streaming_map and job_queue */
 	spinlock_t hw_lock;
