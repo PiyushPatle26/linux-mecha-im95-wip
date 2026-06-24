@@ -2084,8 +2084,10 @@
 			reg = <0x0 0x4ae00000 0x0 0x8000>,
 			      <0x0 0x4afe0000 0x0 0x10000>;
 			interrupts = <GIC_SPI 222 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&scmi_clk IMX95_CLK_CAMCM0>;
-			clock-names = "camcm0";
+			clocks = <&cameramix_csr IMX95_CLK_CAMBLK_ISP_AXI>,
+				 <&cameramix_csr IMX95_CLK_CAMBLK_ISP_PIXEL>,
+				 <&cameramix_csr IMX95_CLK_CAMBLK_ISP>;
+			clock-names = "camblk_isp_axi", "camblk_isp_pixel", "camblk_isp";
 			power-domains = <&scmi_devpd IMX95_PD_CAMERA>;
 			status = "disabled";
 		};
