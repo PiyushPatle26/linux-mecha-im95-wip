@@ -80,6 +80,13 @@ struct dw_dphy_drv_data {
 	u32 regs_size;
 	u32 max_lanes;
 	u32 max_data_rate; /* Mbps */
+	/*
+	 * Set when the CSI-2 host controller owns the DesignWare D-PHY test
+	 * interface (reset, shutdown and lane configuration). In that case the
+	 * PHY only programs its frequency range and does not access the host
+	 * register block, so the "fsl,csis" phandle is not required.
+	 */
+	bool host_owns_phy_ctrl;
 };
 
 struct dw_dphy {
@@ -255,13 +262,15 @@ static int dw_dphy_init(struct phy *phy)
 	int ret;
 
 	/*
-	 * PHY driver depend on CSI controller to provide partial
-	 * configuration access for PHY, such as PHY reset. Get
-	 * the phandle in phy init callback since it will introduce
-	 * CSI controller and PHY recursive dependency issue if do
-	 * this when probe.
+	 * When the CSI-2 host owns the D-PHY test interface, the PHY does not
+	 * touch the host register block and the "fsl,csis" phandle is omitted.
+	 *
+	 * Otherwise the PHY provides partial configuration access for the host
+	 * (e.g. PHY reset). The phandle is resolved here rather than at probe
+	 * time to avoid a circular dependency between the CSI controller and
+	 * the PHY.
 	 */
-	if (!priv->csis_regmap) {
+	if (!priv->drv_data->host_owns_phy_ctrl && !priv->csis_regmap) {
 		csis = syscon_regmap_lookup_by_phandle(np, "fsl,csis");
 		if (IS_ERR(csis)) {
 			dev_err(dev, "failed to get csi controller\n");
@@ -301,6 +310,16 @@ static int dw_dphy_power_on(struct phy *phy)
 	const struct dw_dphy_drv_data *drv_data = priv->drv_data;
 	struct phy_configure_opts_mipi_dphy *config = &priv->config;
 	u32 val;
+
+	/*
+	 * When the CSI-2 host owns the D-PHY test interface, the host performs
+	 * the reset and lane configuration; the PHY only programs its
+	 * frequency range.
+	 */
+	if (drv_data->host_owns_phy_ctrl) {
+		drv_data->cfg_ops->config(priv);
+		return 0;
+	}
 
 	/* Release Synopsys DPHY test codes from reset */
 	csis_write(priv, CSIS_DPHY_RSTZ, 0x0);
@@ -349,6 +368,10 @@ static int dw_dphy_power_on(struct phy *phy)
 static int dw_dphy_power_off(struct phy *phy)
 {
 	struct dw_dphy *priv = phy_get_drvdata(phy);
+
+	/* The CSI-2 host handles power-off when it owns the test interface. */
+	if (priv->drv_data->host_owns_phy_ctrl)
+		return 0;
 
 	csis_write(priv, CSIS_N_LANES, 0);
 	csis_write(priv, CSIS_DPHY_RSTZ, 0x0);
@@ -535,6 +558,7 @@ static const struct dw_dphy_drv_data imx95_dphy_drvdata = {
 	.cfg_ops = &imx95_dphy_cfg_ops,
 	.max_lanes = 4,
 	.max_data_rate = 2500,
+	.host_owns_phy_ctrl = true,
 };
 
 static const struct dw_dphy_reg imx95_combo_regs[] = {
