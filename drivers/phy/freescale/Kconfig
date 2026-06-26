@@ -58,6 +58,19 @@ config PHY_FSL_SAMSUNG_HDMI_PHY
 	depends on OF && HAS_IOMEM && COMMON_CLK
 	help
 	  Enable this to add support for the Samsung HDMI PHY in i.MX8MP.
+config PHY_FSL_IMX9_DPHY_RX
+	tristate "Freescale i.MX9 MIPI D-PHY Rx"
+	depends on OF && HAS_IOMEM
+	select GENERIC_PHY
+	select GENERIC_PHY_MIPI_DPHY
+	select REGMAP_MMIO
+	help
+	  Enable this to add support for the Synopsys DesignWare MIPI D-PHY
+	  receiver as found on NXP's i.MX9 family (i.MX93, i.MX95). The PHY
+	  feeds the MIPI CSI-2 receiver for camera capture, and on i.MX95
+	  also provides the combo (CSI/DSI) PHY variant.
+
+
 endif
 
 config PHY_FSL_LYNX_28G
