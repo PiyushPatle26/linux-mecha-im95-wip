@@ -1794,6 +1794,127 @@
 			assigned-clock-parents = <&scmi_clk IMX95_CLK_SYSPLL1_PFD1>,
 						 <&scmi_clk IMX95_CLK_SYSPLL1_PFD1_DIV2>;
 			assigned-clock-rates = <800000000>, <133333333>;
+
+			csi_pixel_formatter_0: formatter@20 {
+				compatible = "fsl,imx95-csi-formatter";
+				reg = <0x20 0x100>;
+				clocks = <&cameramix_csr IMX95_CLK_CAMBLK_CSI2_FOR0>;
+				power-domains = <&scmi_devpd IMX95_PD_CAMERA>;
+				status = "disabled";
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					port@0 {
+						reg = <0>;
+
+						formatter0_in: endpoint {
+							remote-endpoint = <&mipi_csi0_out>;
+						};
+					};
+
+					port@1 {
+						reg = <1>;
+
+						formatter0_out: endpoint {
+							remote-endpoint = <&isi_in0>;
+						};
+					};
+				};
+			};
+		};
+
+		combo_phy_csr: syscon@4ad20000 {
+			compatible = "syscon", "simple-mfd";
+			reg = <0x0 0x4ad20000 0x0 0x114>;
+			clocks = <&scmi_clk IMX95_CLK_CAMAPB>;
+
+			dphy_rx: dphy-rx {
+				compatible = "fsl,imx95-dphy-rx";
+				clocks = <&scmi_clk IMX95_CLK_MIPIPHYCFG>;
+				clock-names = "phy_cfg";
+				assigned-clocks = <&scmi_clk IMX95_CLK_MIPIPHYCFG>;
+				assigned-clock-parents = <&scmi_clk IMX95_CLK_24M>;
+				assigned-clock-rates = <24000000>;
+				#phy-cells = <0>;
+				power-domains = <&scmi_devpd IMX95_PD_CAMERA>;
+				status = "disabled";
+			};
+		};
+
+		mipi_csi0: csi@4ad30000 {
+			compatible = "fsl,imx95-mipi-csi2";
+			reg = <0x0 0x4ad30000 0x0 0x10000>;
+			interrupts = <GIC_SPI 374 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&cameramix_csr IMX95_CLK_CAMBLK_CSI2_FOR0>,
+				 <&scmi_clk IMX95_CLK_CAMAPB>;
+			clock-names = "per", "pixel";
+			phys = <&dphy_rx>;
+			phy-names = "dphy";
+			power-domains = <&scmi_devpd IMX95_PD_CAMERA>;
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+				};
+
+				port@1 {
+					reg = <1>;
+
+					mipi_csi0_out: endpoint {
+						remote-endpoint = <&formatter0_in>;
+					};
+				};
+			};
+		};
+
+		isi: isi@4ad50000 {
+			compatible = "fsl,imx95-isi";
+			reg = <0x0 0x4ad50000 0x0 0x80000>;
+			interrupts = <GIC_SPI 221 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 344 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 345 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 346 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 347 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 348 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 349 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 350 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&scmi_clk IMX95_CLK_CAMISI>;
+			clock-names = "axi";
+			fsl,blk-ctrl = <&cameramix_csr>;
+			power-domains = <&scmi_devpd IMX95_PD_CAMERA>;
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@2 {
+					reg = <2>;
+
+					isi_in0: endpoint {
+						remote-endpoint = <&formatter0_out>;
+					};
+				};
+			};
+		};
+
+		neoisp: isp@4ae00000 {
+			compatible = "nxp,imx95-neoisp";
+			reg = <0x0 0x4ae00000 0x0 0x8000>,
+			      <0x0 0x4afe0000 0x0 0x10000>;
+			interrupts = <GIC_SPI 222 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&cameramix_csr IMX95_CLK_CAMBLK_ISP_AXI>,
+				 <&cameramix_csr IMX95_CLK_CAMBLK_ISP_PIXEL>,
+				 <&cameramix_csr IMX95_CLK_CAMBLK_ISP>;
+			clock-names = "camblk_isp_axi", "camblk_isp_pixel", "camblk_isp";
+			power-domains = <&scmi_devpd IMX95_PD_CAMERA>;
+			status = "disabled";
 		};
 
 		mipi_dsi: dsi@4acf0000 {

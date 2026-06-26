@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * OS08A20 camera on the i.MX95 15x15 FRDM, dedicated MIPI-CSI connector
+ * (lpi2c4). Pipeline: os08a20 -> MIPI CSI-2 (synopsys) -> CSI formatter -> ISI.
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/gpio/gpio.h>
+
+&lpi2c4 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	os08a20: camera@36 {
+		compatible = "ovti,os08a20";
+		reg = <0x36>;
+		clocks = <&dummy>;
+		reset-gpios = <&pcal6524 19 GPIO_ACTIVE_LOW>;
+		orientation = <2>;
+		rotation = <0>;
+		status = "okay";
+
+		port {
+			os08a20_ep: endpoint {
+				remote-endpoint = <&mipi_csi0_in>;
+				data-lanes = <1 2 3 4>;
+				clock-lanes = <0>;
+			};
+		};
+	};
+};
+
+&dphy_rx {
+	status = "okay";
+};
+
+&csi_pixel_formatter_0 {
+	status = "okay";
+};
+
+&isi {
+	status = "okay";
+};
+
+&mipi_csi0 {
+	status = "okay";
+
+	ports {
+		port@0 {
+			mipi_csi0_in: endpoint {
+				remote-endpoint = <&os08a20_ep>;
+				data-lanes = <1 2 3 4>;
+				clock-lanes = <0>;
+			};
+		};
+	};
+};
+
+&neoisp {
+	status = "okay";
+};
