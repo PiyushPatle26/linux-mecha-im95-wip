@@ -115,7 +115,7 @@ static const struct ox05b1s_mode os08a20_supported_modes[] = {
 		.index		= 0,
 		.width		= 1920,
 		.height		= 1080,
-		.code		= MEDIA_BUS_FMT_Y10_1X10,
+		.code		= MEDIA_BUS_FMT_SBGGR10_1X10,
 		.bpp		= 10,
 		.vts		= 0x4d3,
 		.hts		= 0x790,
@@ -128,7 +128,7 @@ static const struct ox05b1s_mode os08a20_supported_modes[] = {
 		.index		= 1,
 		.width		= 3840,
 		.height		= 2160,
-		.code		= MEDIA_BUS_FMT_Y10_1X10,
+		.code		= MEDIA_BUS_FMT_SBGGR10_1X10,
 		.bpp		= 10,
 		.vts		= 0x90a,
 		.hts		= 0x818,
@@ -141,7 +141,7 @@ static const struct ox05b1s_mode os08a20_supported_modes[] = {
 		.index		= 2,
 		.width		= 3840,
 		.height		= 2160,
-		.code		= MEDIA_BUS_FMT_Y12_1X12,
+		.code		= MEDIA_BUS_FMT_SBGGR12_1X12,
 		.bpp		= 12,
 		.vts		= 0x8f0,
 		.hts		= 0x814,
@@ -178,10 +178,10 @@ static const struct v4l2_area os08a20_sbggr12_sizes[] = {
 
 static const struct ox05b1s_sizes os08a20_supported_codes[] = {
 	{
-		.code = MEDIA_BUS_FMT_Y10_1X10,
+		.code = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.sizes = os08a20_sbggr10_sizes,
 	}, {
-		.code = MEDIA_BUS_FMT_Y12_1X12,
+		.code = MEDIA_BUS_FMT_SBGGR12_1X12,
 		.sizes = os08a20_sbggr12_sizes,
 	}, {
 		/* sentinel */
@@ -812,8 +812,10 @@ static u8 ox05b1s_code2dt(const u32 code)
 {
 	switch (code) {
 	case MEDIA_BUS_FMT_Y10_1X10:
+	case MEDIA_BUS_FMT_SBGGR10_1X10:
 		return MIPI_CSI2_DT_RAW10;
 	case MEDIA_BUS_FMT_Y12_1X12:
+	case MEDIA_BUS_FMT_SBGGR12_1X12:
 		return MIPI_CSI2_DT_RAW12;
 	default:
 		return MIPI_CSI2_DT_RAW10;
