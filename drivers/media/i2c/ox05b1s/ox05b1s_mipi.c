@@ -994,7 +994,9 @@ static int ox05b1s_probe(struct i2c_client *client)
 	if (ret)
 		goto probe_out;
 
-	devm_mutex_init(dev, &sensor->lock);
+	ret = devm_mutex_init(dev, &sensor->lock);
+	if (ret)
+		goto probe_err_entity_cleanup;
 
 	ret = ox05b1s_init_controls(sensor);
 	if (ret)
