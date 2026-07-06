@@ -258,6 +258,18 @@
 		reg = <0x0 0x80000000 0 0x80000000>;
 		device_type = "memory";
 	};
+
+	hdmi-connector {
+		compatible = "hdmi-connector";
+		label = "hdmi";
+		type = "a";
+
+		port {
+			hdmi_connector_in: endpoint {
+				remote-endpoint = <&it6263_out>;
+			};
+		};
+	};
 };
 
 &adc1 {
@@ -438,6 +450,43 @@
 			color = <LED_COLOR_ID_WHITE>;
 			function = LED_FUNCTION_BACKLIGHT;
 			function-enumerator = <1>;
+		};
+	};
+
+	bridge@4c {
+		compatible = "ite,it6263";
+		reg = <0x4c>;
+		data-mapping = "jeida-24";
+		reset-gpios = <&pcal6524 23 GPIO_ACTIVE_LOW>;
+		ivdd-supply = <&reg_1p8v>;
+		ovdd-supply = <&reg_3p3v>;
+		txavcc18-supply = <&reg_1p8v>;
+		txavcc33-supply = <&reg_3p3v>;
+		pvcc1-supply = <&reg_1p8v>;
+		pvcc2-supply = <&reg_1p8v>;
+		avcc-supply = <&reg_3p3v>;
+		anvdd-supply = <&reg_1p8v>;
+		apvdd-supply = <&reg_1p8v>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				it6263_in: endpoint {
+					remote-endpoint = <&lvds1_out>;
+				};
+			};
+
+			port@2 {
+				reg = <2>;
+
+				it6263_out: endpoint {
+					remote-endpoint = <&hdmi_connector_in>;
+				};
+			};
 		};
 	};
 };
@@ -1030,6 +1079,66 @@
 	vmmc-supply = <&reg_usdhc3_vmmc>;
 	wakeup-source;
 	status = "okay";
+};
+
+&displaymix_irqsteer {
+	status = "okay";
+};
+
+&dc_intc1 {
+	status = "okay";
+};
+
+&dc {
+	status = "okay";
+};
+
+&fg0 { status = "okay"; };
+&fg1 { status = "okay"; };
+&cf0 { status = "okay"; };
+&cf1 { status = "okay"; };
+&lb1 { status = "okay"; };
+&lb2 { status = "okay"; };
+&lb3 { status = "okay"; };
+&lb4 { status = "okay"; };
+&lb5 { status = "okay"; };
+&lb6 { status = "okay"; };
+&ed0 { status = "okay"; };
+&ed1 { status = "okay"; };
+&fl0 { status = "okay"; };
+&fl1 { status = "okay"; };
+&db0 { status = "okay"; };
+&db1 { status = "okay"; };
+&di0 { status = "okay"; };
+&di1 { status = "okay"; };
+
+&ldb {
+	assigned-clocks = <&scmi_clk IMX95_CLK_LDBPLL_VCO>,
+			  <&scmi_clk IMX95_CLK_LDBPLL>;
+	assigned-clock-rates = <4158000000>, <1039500000>;
+	status = "okay";
+
+	channel@1 {
+		status = "okay";
+
+		port@1 {
+			lvds1_out: endpoint {
+				remote-endpoint = <&it6263_in>;
+			};
+		};
+	};
+};
+
+&ldb1_phy {
+	status = "okay";
+};
+
+&pixel_interleaver {
+	status = "okay";
+
+	channel@1 {
+		status = "okay";
+	};
 };
 
 &wdog3 {
