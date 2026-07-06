@@ -7,6 +7,8 @@
 #define __DC_KMS_H__
 
 #include <linux/completion.h>
+#include <linux/hrtimer.h>
+#include <linux/ktime.h>
 
 #include <drm/drm_crtc.h>
 #include <drm/drm_plane.h>
@@ -16,7 +18,7 @@
 #include "dc-fu.h"
 #include "dc-pe.h"
 
-#define DC_CRTC_IRQS	5
+#define DC_CRTC_IRQS	6
 
 struct dc_crtc_irq {
 	struct dc_crtc *dc_crtc;
@@ -52,6 +54,25 @@ struct dc_crtc {
 	struct dc_fg *fg;
 	/** @tc: tcon */
 	struct dc_tc *tc;
+	/** @db: i.MX95 DomainBlend instance (NULL on 8QXP) */
+	void *db;
+	/** @di: i.MX95 Dither instance (NULL on 8QXP) */
+	void *di;
+	/**
+	 * @output_is_dsi:
+	 *
+	 * i.MX95: the output pipeline drives a MIPI-DSI encoder rather than
+	 * LVDS/LDB.  Selects the FrameGen pixel-clock source (DSI PLL vs LVDS
+	 * PLL) in the enable/disable paths.
+	 */
+	bool output_is_dsi;
+	/**
+	 * @irq_dec_dev:
+	 *
+	 * device owning the display-engine-config interrupts (the display
+	 * engine on i.MX8QXP, the Dither/DISENGCFG block on i.MX95)
+	 */
+	struct device *irq_dec_dev;
 	/**
 	 * @irq_dec_framecomplete:
 	 *
@@ -83,6 +104,14 @@ struct dc_crtc {
 	 */
 	unsigned int irq_ed_safe_shdload;
 	/**
+	 * @irq_db_shdload:
+	 *
+	 * i.MX95 DomainBlend shadow load interrupt (0 on i.MX8QXP)
+	 */
+	unsigned int irq_db_shdload;
+	/** @db_dev: device owning the DomainBlend interrupt (i.MX95 only) */
+	struct device *db_dev;
+	/**
 	 * @dec_seqcomplete_done:
 	 *
 	 * display engine configuration sequence completion
@@ -106,8 +135,18 @@ struct dc_crtc {
 	 * safety stream extdst shadow load completion
 	 */
 	struct completion ed_safe_shdload_done;
+	/**
+	 * @db_shdload_done:
+	 *
+	 * i.MX95 DomainBlend shadow load completion
+	 */
+	struct completion db_shdload_done;
 	/** @event: cached pending vblank event */
 	struct drm_pending_vblank_event *event;
+	/** @vblank_hrtimer: software vblank timer when no framecomplete IRQ */
+	struct hrtimer vblank_hrtimer;
+	/** @vblank_period: hrtimer period derived from the active display mode */
+	ktime_t vblank_period;
 	/** @irqs: interrupt list */
 	struct dc_crtc_irq irqs[DC_CRTC_IRQS];
 };
@@ -134,5 +173,10 @@ static inline struct dc_plane *to_dc_plane(struct drm_plane *plane)
 {
 	return container_of(plane, struct dc_plane, base);
 }
+
+struct dc_drm_device;
+
+extern const struct drm_mode_config_funcs dc_drm_mode_config_funcs;
+int dc_kms_init_encoder_per_crtc(struct dc_drm_device *dc_drm, int crtc_index);
 
 #endif /* __DC_KMS_H__ */

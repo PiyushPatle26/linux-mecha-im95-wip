@@ -4,6 +4,7 @@
  */
 
 #include <linux/container_of.h>
+#include <linux/module.h>
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
@@ -91,6 +92,10 @@ static int dc_plane_check_dprc(struct drm_plane_state *state)
 	dma_addr_t baseaddr = drm_fb_dma_get_gem_addr(fb, state, 0);
 	struct dc_dprc *dprc = dplane->fu->dprc;
 	u32 src_w = drm_rect_width(&state->src) >> 16;
+
+	/* i.MX95 has no DPRC; skip checks that require it */
+	if (!dprc)
+		return 0;
 
 	if (!dc_dprc_rtram_width_supported(dprc, src_w)) {
 		dc_plane_dbg(state->plane, "bad RTRAM width for DPRC\n");
@@ -190,9 +195,15 @@ dc_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_commit *state)
 
 	dc_plane_dbg(plane, "uses %s\n", fu_ops->get_name(fu));
 
-	dc_dprc_configure(fu->dprc, new_state->crtc->index, src_w, src_h,
-			  fb->pitches[0], fb->format, baseaddr, prefetch_start);
+	if (fu->dprc)
+		dc_dprc_configure(fu->dprc, new_state->crtc->index, src_w, src_h,
+				  fb->pitches[0], fb->format, baseaddr, prefetch_start);
 
+	/*
+	 * Background (ConstFrame) on PRIM, plane (FetchUnit) on SEC; the blend
+	 * emits SEC. Same topology on i.MX8QXP and i.MX95 (see the LB prim/sec
+	 * select lists in dc-lb.c).
+	 */
 	dc_lb_pec_dynamic_prim_sel(lb, dc_cf_get_link_id(dplane->cf));
 	dc_lb_pec_dynamic_sec_sel(lb, fu_ops->get_link_id(fu));
 	dc_lb_mode(lb, LB_BLEND);
@@ -201,8 +212,9 @@ dc_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_commit *state)
 
 	dc_plane_dbg(plane, "uses LayerBlend%d\n", dc_lb_get_id(lb));
 
-	/* set ExtDst's source to LayerBlend */
+	/* set ExtDst's source to LayerBlend and enable clock */
 	dc_ed_pec_src_sel(dplane->ed, dc_lb_get_link_id(lb));
+	dc_ed_pec_clken(dplane->ed, CLKEN_AUTOMATIC);
 
 	drm_dev_exit(idx);
 }
@@ -221,8 +233,11 @@ static void dc_plane_atomic_disable(struct drm_plane *plane,
 	fu_ops = dc_fu_get_ops(dplane->fu);
 	fu_ops->disable_src_buf(dplane->fu, DC_FETCHUNIT_FRAC0);
 
-	/* set ExtDst's source to ConstFrame */
-	dc_ed_pec_src_sel(dplane->ed, dc_cf_get_link_id(dplane->cf));
+	/* set ExtDst's source to ConstFrame for background */
+	if (dplane->cf) {
+		dc_ed_pec_src_sel(dplane->ed, dc_cf_get_link_id(dplane->cf));
+		dc_ed_pec_clken(dplane->ed, CLKEN_AUTOMATIC);
+	}
 
 	drm_dev_exit(idx);
 }
@@ -233,12 +248,14 @@ static const struct drm_plane_helper_funcs dc_plane_helper_funcs = {
 	.atomic_disable = dc_plane_atomic_disable,
 };
 
-int dc_plane_init(struct dc_drm_device *dc_drm, struct dc_plane *dc_plane)
+int dc_plane_init(struct dc_drm_device *dc_drm, struct dc_plane *dc_plane,
+		  unsigned int possible_crtcs)
 {
 	struct drm_plane *plane = &dc_plane->base;
 	int ret;
 
-	ret = drm_universal_plane_init(&dc_drm->base, plane, 0, &dc_plane_funcs,
+	ret = drm_universal_plane_init(&dc_drm->base, plane, possible_crtcs,
+				       &dc_plane_funcs,
 				       dc_plane_formats,
 				       ARRAY_SIZE(dc_plane_formats),
 				       NULL, DRM_PLANE_TYPE_PRIMARY, NULL);
@@ -247,10 +264,42 @@ int dc_plane_init(struct dc_drm_device *dc_drm, struct dc_plane *dc_plane)
 
 	drm_plane_helper_add(plane, &dc_plane_helper_funcs);
 
-	dc_plane->fu = dc_drm->pe->fu_disp[plane->index];
 	dc_plane->cf = dc_drm->pe->cf_cont[plane->index];
-	dc_plane->lb = dc_drm->pe->lb[plane->index];
 	dc_plane->ed = dc_drm->pe->ed_cont[plane->index];
+
+	if (dc_drm->imx95) {
+		/*
+		 * FetchLayer0 is the FetchUnit wired into stream 1's blend
+		 * chain (LB6); the working reference drives stream 1 from
+		 * FL0.  Map stream 1 -> FL0 (fu_disp[0]) and stream 0 -> FL1
+		 * so a single active display gets the correct fetch path.
+		 */
+		static const int imx95_fu_map[] = { 1, 0 };
+		int fu_idx = plane->index < ARRAY_SIZE(imx95_fu_map) ?
+			     imx95_fu_map[plane->index] : plane->index;
+
+		dc_plane->fu = dc_drm->pe->fu_disp[fu_idx];
+	} else {
+		dc_plane->fu = dc_drm->pe->fu_disp[plane->index];
+	}
+
+	if (dc_drm->imx95) {
+		/*
+		 * pe->lb[] is indexed by hardware LayerBlend id (1..6 on i.MX95).
+		 * Each display stream's blend chain terminates at a fixed
+		 * LayerBlend that is wired to that stream's ExtDst: stream 0 ->
+		 * LB1, stream 1 -> LB6.  ExtDst must source that terminal LB or
+		 * the pixel/kick path never closes (FrameGen panics: green).
+		 */
+		static const int imx95_lb_map[] = { 1, 6 };
+		int lb_idx = plane->index < ARRAY_SIZE(imx95_lb_map) ?
+			     imx95_lb_map[plane->index] : plane->index;
+
+		dc_plane->lb = dc_drm->pe->lb[lb_idx];
+	} else {
+		dc_plane->lb = dc_drm->pe->lb[plane->index];
+	}
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(dc_plane_init);

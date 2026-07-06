@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2024 NXP
+ *
+ * KMS init helpers shared between the i.MX8QXP and i.MX95 DC8000 DRM
+ * drivers.  dc_kms_init()/dc_kms_uninit() themselves are per-SoC since they
+ * call the per-SoC dc_crtc_init().
  */
 
+#include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_graph.h>
 
@@ -16,22 +21,20 @@
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_mode_config.h>
 #include <drm/drm_print.h>
-#include <drm/drm_probe_helper.h>
 #include <drm/drm_simple_kms_helper.h>
-#include <drm/drm_vblank.h>
 
 #include "dc-de.h"
 #include "dc-drv.h"
 #include "dc-kms.h"
 
-static const struct drm_mode_config_funcs dc_drm_mode_config_funcs = {
+const struct drm_mode_config_funcs dc_drm_mode_config_funcs = {
 	.fb_create = drm_gem_fb_create,
 	.atomic_check = drm_atomic_helper_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
+EXPORT_SYMBOL_GPL(dc_drm_mode_config_funcs);
 
-static int dc_kms_init_encoder_per_crtc(struct dc_drm_device *dc_drm,
-					int crtc_index)
+int dc_kms_init_encoder_per_crtc(struct dc_drm_device *dc_drm, int crtc_index)
 {
 	struct dc_crtc *dc_crtc = &dc_drm->dc_crtc[crtc_index];
 	struct drm_device *drm = &dc_drm->base;
@@ -40,10 +43,17 @@ static int dc_kms_init_encoder_per_crtc(struct dc_drm_device *dc_drm,
 	struct device *dev = drm->dev;
 	struct drm_encoder *encoder;
 	struct drm_bridge *bridge;
+	struct device_node *out;
 	int ret;
 
-	bridge = devm_drm_of_get_bridge(dev, dc_crtc->de->tc->dev->of_node,
-					0, 0);
+	if (dc_crtc->tc) {
+		out = dc_crtc->tc->dev->of_node;
+	} else {
+		/* i.MX95: look for bridge on DC node's port@crtc_index */
+		out = dev->of_node;
+	}
+
+	bridge = devm_drm_of_get_bridge(dev, out, crtc_index, 0);
 	if (IS_ERR(bridge)) {
 		ret = PTR_ERR(bridge);
 		if (ret == -ENODEV)
@@ -81,57 +91,21 @@ static int dc_kms_init_encoder_per_crtc(struct dc_drm_device *dc_drm,
 		return ret;
 	}
 
-	return 0;
-}
-
-int dc_kms_init(struct dc_drm_device *dc_drm)
-{
-	struct drm_device *drm = &dc_drm->base;
-	int ret, i;
-
-	ret = drmm_mode_config_init(drm);
-	if (ret)
-		return ret;
-
-	drm->mode_config.min_width = 60;
-	drm->mode_config.min_height = 60;
-	drm->mode_config.max_width = 8192;
-	drm->mode_config.max_height = 8192;
-	drm->mode_config.funcs = &dc_drm_mode_config_funcs;
-
-	drm->vblank_disable_immediate = true;
-	drm->max_vblank_count = DC_FRAMEGEN_MAX_FRAME_INDEX;
-
-	for (i = 0; i < DC_DISPLAYS; i++) {
-		ret = dc_crtc_init(dc_drm, i);
-		if (ret)
-			return ret;
-
-		ret = dc_kms_init_encoder_per_crtc(dc_drm, i);
-		if (ret)
-			return ret;
-	}
-
-	for (i = 0; i < DC_DISPLAYS; i++) {
-		ret = dc_crtc_post_init(dc_drm, i);
-		if (ret)
-			return ret;
-	}
-
-	ret = drm_vblank_init(drm, DC_DISPLAYS);
+	ret = drm_connector_attach_encoder(connector, encoder);
 	if (ret) {
-		dev_err(drm->dev, "failed to init vblank support: %d\n", ret);
+		dev_err(dev,
+			"failed to attach encoder to connector for CRTC%u: %d\n",
+			crtc->index, ret);
 		return ret;
 	}
 
-	drm_mode_config_reset(drm);
-
-	drm_kms_helper_poll_init(drm);
+	/*
+	 * Record the output type so the CRTC can select the matching FrameGen
+	 * pixel-clock source (i.MX95: DSI PLL for MIPI-DSI, LVDS PLL otherwise).
+	 */
+	dc_crtc->output_is_dsi =
+		connector->connector_type == DRM_MODE_CONNECTOR_DSI;
 
 	return 0;
 }
-
-void dc_kms_uninit(struct dc_drm_device *dc_drm)
-{
-	drm_kms_helper_poll_fini(&dc_drm->base);
-}
+EXPORT_SYMBOL_GPL(dc_kms_init_encoder_per_crtc);
