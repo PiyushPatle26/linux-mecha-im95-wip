@@ -11,15 +11,16 @@
 #include <linux/regmap.h>
 
 #include "dc-de.h"
-
-#define SHDEN			BIT(0)
-
-#define CLKEN_MASK_SHIFT	24
-#define CLKEN_MASK		(0x3 << CLKEN_MASK_SHIFT)
-#define CLKEN(n)		((n) << CLKEN_MASK_SHIFT)
+#include "dc-lib.h"
 
 #define DC_DISP_FU_CNT		2
-#define DC_LB_CNT		4
+/*
+ * LayerBlend array is indexed by hardware id.  i.MX8QXP uses ids 0..3,
+ * i.MX95 uses ids 1..6, so the array must hold id 6 (LB6), i.e. sized 7.
+ * Undersizing this silently drops LB6, which is the
+ * terminal LayerBlend of i.MX95 stream 1 and must feed ExtDst1.
+ */
+#define DC_LB_CNT		7	/* max LB id (6 on i.MX95) + 1 */
 
 enum dc_link_id {
 	LINK_ID_NONE		= 0x00,
@@ -54,6 +55,7 @@ struct dc_ed {
 	struct device *dev;
 	struct regmap *reg_pec;
 	struct regmap *reg_cfg;
+	const struct dc_lib_ed_match_data *match_data;
 	int irq_shdload;
 };
 
@@ -61,6 +63,7 @@ struct dc_lb {
 	struct device *dev;
 	struct regmap *reg_pec;
 	struct regmap *reg_cfg;
+	const struct dc_lib_lb_match_data *match_data;
 	int id;
 	enum dc_link_id link;
 };
@@ -84,9 +87,11 @@ void dc_cf_constantcolor_blue(struct dc_cf *cf);
 void dc_cf_init(struct dc_cf *cf);
 
 /* External Destination Unit */
+void dc_ed_pec_clken(struct dc_ed *ed, u32 clken);
 void dc_ed_pec_src_sel(struct dc_ed *ed, enum dc_link_id src);
 int dc_ed_pec_src_sel_get(struct dc_ed *ed, enum dc_link_id *src);
 void dc_ed_pec_sync_trigger(struct dc_ed *ed);
+int dc_ed_pec_sync_wait(struct dc_ed *ed);
 void dc_ed_init(struct dc_ed *ed);
 
 /* Layer Blend Unit */

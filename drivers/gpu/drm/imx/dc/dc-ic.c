@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2024 NXP
+ *
+ * DC COMCTRL interrupt controller: chained irqchip with irq_domain and
+ * generic irq chips.  Supports both i.MX8QXP (USERINTERRUPT* dual-mode)
+ * and i.MX95 (single-mode INTERRUPT* at different offsets).
  */
 
 #include <linux/clk.h>
@@ -14,35 +18,144 @@
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 
-#define USERINTERRUPTMASK(n)	(0x8 + 4 * (n))
-#define INTERRUPTENABLE(n)	(0x10 + 4 * (n))
-#define INTERRUPTPRESET(n)	(0x18 + 4 * (n))
-#define INTERRUPTCLEAR(n)	(0x20 + 4 * (n))
-#define INTERRUPTSTATUS(n)	(0x28 + 4 * (n))
-#define USERINTERRUPTENABLE(n)	(0x40 + 4 * (n))
-#define USERINTERRUPTPRESET(n)	(0x48 + 4 * (n))
-#define USERINTERRUPTCLEAR(n)	(0x50 + 4 * (n))
-#define USERINTERRUPTSTATUS(n)	(0x58 + 4 * (n))
+/* ------------------------------------------------------------------ */
+/* Variant data: per-compatible register layout and config             */
+/* ------------------------------------------------------------------ */
 
-#define IRQ_COUNT	49
-#define IRQ_RESERVED	35
-#define REG_NUM		2
+struct dc_ic_regs {
+	unsigned int enable;
+	unsigned int preset;
+	unsigned int clear;
+	unsigned int status;
+};
+
+struct dc_ic_variant {
+	int			irq_count;
+	int			irq_reserved;	/* -1 = none */
+	int			banks;
+	const unsigned long	*unused;
+
+	/* Primary register set (used for generic chip mask/ack + handler) */
+	const struct dc_ic_regs	*regs;	/* per bank */
+
+	/* i.MX8QXP-only: secondary USER registers */
+	const struct dc_ic_regs	*user_regs;	/* per bank, NULL = not present */
+	unsigned int		user_mask_base;	/* USERINTERRUPTMASK(0) */
+};
+
+/* ------------------------------------------------------------------ */
+/* 8QXP register layout                                               */
+/* ------------------------------------------------------------------ */
+
+static const struct dc_ic_regs dc_ic_8qxp_sys_regs[] = {
+	{ 0x10, 0x18, 0x20, 0x28 },
+	{ 0x14, 0x1c, 0x24, 0x2c },
+};
+
+static const struct dc_ic_regs dc_ic_8qxp_user_regs[] = {
+	{ 0x40, 0x48, 0x50, 0x58 },
+	{ 0x44, 0x4c, 0x54, 0x5c },
+};
+
+static const unsigned long dc_ic_8qxp_unused[] = {
+	0x00000000,
+	0xfffe0008,
+};
+
+/* ------------------------------------------------------------------ */
+/* i.MX95 register layout (single mode, no USER registers)            */
+/* ------------------------------------------------------------------ */
+
+static const struct dc_ic_regs dc_ic_imx95_regs[] = {
+	{ 0x08, 0x14, 0x20, 0x2c },
+	{ 0x0c, 0x18, 0x24, 0x30 },
+	{ 0x10, 0x1c, 0x28, 0x34 },
+};
+
+static const unsigned long dc_ic_imx95_unused[] = {
+	0x00000000,
+	0x00000000,
+	0xffc00000,
+};
+
+/* ------------------------------------------------------------------ */
+/* Variant descriptors                                                */
+/* ------------------------------------------------------------------ */
+
+static const struct dc_ic_variant dc_ic_8qxp = {
+	.irq_count	= 49,
+	.irq_reserved	= 35,
+	.banks		= 2,
+	.unused		= dc_ic_8qxp_unused,
+	.regs		= dc_ic_8qxp_sys_regs,
+	.user_regs	= dc_ic_8qxp_user_regs,
+	.user_mask_base	= 0x08,
+};
+
+static const struct dc_ic_variant dc_ic_imx95 = {
+	.irq_count	= 86,
+	.irq_reserved	= -1,
+	.banks		= 3,
+	.unused		= dc_ic_imx95_unused,
+	.regs		= dc_ic_imx95_regs,
+	.user_regs	= NULL,
+	.user_mask_base	= 0,
+};
+
+/* ------------------------------------------------------------------ */
+/* Per-instance data                                                   */
+/* ------------------------------------------------------------------ */
 
 struct dc_ic_data {
 	struct regmap		*regs;
 	struct clk		*clk_axi;
-	int			irq[IRQ_COUNT];
 	struct irq_domain	*domain;
+	const struct dc_ic_variant *variant;
+	int			*parent_irq;	/* physical parent or -ENOENT */
+	struct dc_ic_entry	*entry;		/* one per hwirq */
 };
 
 struct dc_ic_entry {
 	struct dc_ic_data *data;
-	int irq;
+	int		  hwirq;
 };
 
+/* ------------------------------------------------------------------ */
+/* Chained handler                                                     */
+/* ------------------------------------------------------------------ */
+
+static void dc_ic_irq_handler(struct irq_desc *desc)
+{
+	struct dc_ic_entry *entry = irq_desc_get_handler_data(desc);
+	struct dc_ic_data *data = entry->data;
+	const struct dc_ic_regs *r;
+	unsigned int hwirq = entry->hwirq;
+	unsigned int bank = hwirq / 32;
+	unsigned int virq;
+	u32 status, enable;
+
+	r = data->variant->user_regs ? data->variant->user_regs : data->variant->regs;
+
+	chained_irq_enter(irq_desc_get_chip(desc), desc);
+
+	regmap_read(data->regs, r[bank].status, &status);
+	regmap_read(data->regs, r[bank].enable, &enable);
+
+	if (status & enable & BIT(hwirq % 32)) {
+		virq = irq_find_mapping(data->domain, hwirq);
+		if (virq)
+			generic_handle_irq(virq);
+	}
+
+	chained_irq_exit(irq_desc_get_chip(desc), desc);
+}
+
+/* ------------------------------------------------------------------ */
+/* Regmap config, common: covers both variants' register ranges        */
+/* ------------------------------------------------------------------ */
+
 static const struct regmap_range dc_ic_regmap_write_ranges[] = {
-	regmap_reg_range(USERINTERRUPTMASK(0), INTERRUPTCLEAR(1)),
-	regmap_reg_range(USERINTERRUPTENABLE(0), USERINTERRUPTCLEAR(1)),
+	regmap_reg_range(0x08, 0x5c),
 };
 
 static const struct regmap_access_table dc_ic_regmap_write_table = {
@@ -51,10 +164,7 @@ static const struct regmap_access_table dc_ic_regmap_write_table = {
 };
 
 static const struct regmap_range dc_ic_regmap_read_ranges[] = {
-	regmap_reg_range(USERINTERRUPTMASK(0), INTERRUPTENABLE(1)),
-	regmap_reg_range(INTERRUPTSTATUS(0), INTERRUPTSTATUS(1)),
-	regmap_reg_range(USERINTERRUPTENABLE(0), USERINTERRUPTENABLE(1)),
-	regmap_reg_range(USERINTERRUPTSTATUS(0), USERINTERRUPTSTATUS(1)),
+	regmap_reg_range(0x08, 0x5c),
 };
 
 static const struct regmap_access_table dc_ic_regmap_read_table = {
@@ -62,9 +172,13 @@ static const struct regmap_access_table dc_ic_regmap_read_table = {
 	.n_yes_ranges = ARRAY_SIZE(dc_ic_regmap_read_ranges),
 };
 
+/* PRESET and CLEAR are write-only; STATUS is read-only.  Marking them
+ * volatile prevents regmap from caching them (they would be stale).
+ * We also include USER variants where present.
+ */
 static const struct regmap_range dc_ic_regmap_volatile_ranges[] = {
-	regmap_reg_range(INTERRUPTPRESET(0), INTERRUPTCLEAR(1)),
-	regmap_reg_range(USERINTERRUPTPRESET(0), USERINTERRUPTCLEAR(1)),
+	regmap_reg_range(0x14, 0x34),
+	regmap_reg_range(0x48, 0x5c),
 };
 
 static const struct regmap_access_table dc_ic_regmap_volatile_table = {
@@ -73,62 +187,53 @@ static const struct regmap_access_table dc_ic_regmap_volatile_table = {
 };
 
 static const struct regmap_config dc_ic_regmap_config = {
-	.reg_bits = 32,
-	.reg_stride = 4,
-	.val_bits = 32,
-	.fast_io = true,
-	.wr_table = &dc_ic_regmap_write_table,
-	.rd_table = &dc_ic_regmap_read_table,
-	.volatile_table = &dc_ic_regmap_volatile_table,
-	.max_register = USERINTERRUPTSTATUS(1),
+	.reg_bits	= 32,
+	.reg_stride	= 4,
+	.val_bits	= 32,
+	.fast_io	= true,
+	.wr_table	= &dc_ic_regmap_write_table,
+	.rd_table	= &dc_ic_regmap_read_table,
+	.volatile_table	= &dc_ic_regmap_volatile_table,
+	.max_register	= 0x5c,
 };
 
-static void dc_ic_irq_handler(struct irq_desc *desc)
-{
-	struct dc_ic_entry *entry = irq_desc_get_handler_data(desc);
-	struct dc_ic_data *data = entry->data;
-	unsigned int status, enable;
-	unsigned int virq;
-
-	chained_irq_enter(irq_desc_get_chip(desc), desc);
-
-	regmap_read(data->regs, USERINTERRUPTSTATUS(entry->irq / 32), &status);
-	regmap_read(data->regs, USERINTERRUPTENABLE(entry->irq / 32), &enable);
-
-	status &= enable;
-
-	if (status & BIT(entry->irq % 32)) {
-		virq = irq_find_mapping(data->domain, entry->irq);
-		if (virq)
-			generic_handle_irq(virq);
-	}
-
-	chained_irq_exit(irq_desc_get_chip(desc), desc);
-}
-
-static const unsigned long unused_irq[REG_NUM] = {0x00000000, 0xfffe0008};
+/* ------------------------------------------------------------------ */
+/* Probe / remove                                                      */
+/* ------------------------------------------------------------------ */
 
 static int dc_ic_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	const struct dc_ic_variant *variant;
 	struct irq_chip_generic *gc;
-	struct dc_ic_entry *entry;
 	struct irq_chip_type *ct;
 	struct dc_ic_data *data;
 	void __iomem *base;
 	int i, ret;
 
+	variant = of_device_get_match_data(dev);
+	if (!variant)
+		return -EINVAL;
+
 	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
-	entry = devm_kcalloc(dev, IRQ_COUNT, sizeof(*entry), GFP_KERNEL);
-	if (!entry)
+	data->variant = variant;
+
+	data->parent_irq = devm_kcalloc(dev, variant->irq_count,
+					sizeof(*data->parent_irq), GFP_KERNEL);
+	if (!data->parent_irq)
+		return -ENOMEM;
+
+	data->entry = devm_kcalloc(dev, variant->irq_count,
+				   sizeof(*data->entry), GFP_KERNEL);
+	if (!data->entry)
 		return -ENOMEM;
 
 	base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(base)) {
-		dev_err(dev, "failed to initialize reg\n");
+		dev_err(dev, "failed to map regs\n");
 		return PTR_ERR(base);
 	}
 
@@ -139,16 +244,26 @@ static int dc_ic_probe(struct platform_device *pdev)
 	data->clk_axi = devm_clk_get(dev, NULL);
 	if (IS_ERR(data->clk_axi))
 		return dev_err_probe(dev, PTR_ERR(data->clk_axi),
-				     "failed to get AXI clock\n");
+				     "failed to get clock\n");
 
-	for (i = 0; i < IRQ_COUNT; i++) {
-		/* skip the reserved IRQ */
-		if (i == IRQ_RESERVED)
+	/*
+	 * Collect parent physical IRQs.  hwirqs that have no DT interrupt
+	 * entry (i.MX95) return -ENXIO and are skipped.  On i.MX8QXP all
+	 * non-reserved hwirqs must have a parent.
+	 */
+	for (i = 0; i < variant->irq_count; i++)
+		data->parent_irq[i] = -ENOENT;
+
+	for (i = 0; i < variant->irq_count; i++) {
+		if (i == variant->irq_reserved)
 			continue;
 
-		ret = platform_get_irq(pdev, i);
+		ret = platform_get_irq_optional(pdev, i);
+		if (ret == -ENXIO)
+			continue;
 		if (ret < 0)
 			return ret;
+		data->parent_irq[i] = ret;
 	}
 
 	dev_set_drvdata(dev, data);
@@ -159,22 +274,39 @@ static int dc_ic_probe(struct platform_device *pdev)
 
 	ret = pm_runtime_resume_and_get(dev);
 	if (ret < 0) {
-		dev_err(dev, "failed to get runtime PM sync: %d\n", ret);
+		dev_err(dev, "failed to resume: %d\n", ret);
 		return ret;
 	}
 
-	for (i = 0; i < REG_NUM; i++) {
-		/* mask and clear all interrupts */
-		regmap_write(data->regs, USERINTERRUPTENABLE(i), 0x0);
-		regmap_write(data->regs, INTERRUPTENABLE(i), 0x0);
-		regmap_write(data->regs, USERINTERRUPTCLEAR(i), 0xffffffff);
-		regmap_write(data->regs, INTERRUPTCLEAR(i), 0xffffffff);
+	/* ---- hardware init ---- */
 
-		/* set all interrupts to user mode */
-		regmap_write(data->regs, USERINTERRUPTMASK(i), 0xffffffff);
+	if (variant->user_regs) {
+		/* i.MX8QXP: mask + clear both USER and SYSTEM regs,
+		 * then switch all IRQs to USER mode.
+		 */
+		for (i = 0; i < variant->banks; i++) {
+			regmap_write(data->regs, variant->user_regs[i].enable, 0);
+			regmap_write(data->regs, variant->regs[i].enable, 0);
+			regmap_write(data->regs, variant->user_regs[i].clear,
+				     0xffffffff);
+			regmap_write(data->regs, variant->regs[i].clear,
+				     0xffffffff);
+			regmap_write(data->regs,
+				     variant->user_mask_base + 4 * i,
+				     0xffffffff);
+		}
+	} else {
+		/* i.MX95: just mask + clear */
+		for (i = 0; i < variant->banks; i++) {
+			regmap_write(data->regs, variant->regs[i].enable, 0);
+			regmap_write(data->regs, variant->regs[i].clear,
+				     ~variant->unused[i]);
+		}
 	}
 
-	data->domain = irq_domain_add_linear(dev->of_node, IRQ_COUNT,
+	/* ---- irq_domain + generic chips ---- */
+
+	data->domain = irq_domain_add_linear(dev->of_node, variant->irq_count,
 					     &irq_generic_chip_ops, data);
 	if (!data->domain) {
 		dev_err(dev, "failed to create IRQ domain\n");
@@ -183,7 +315,7 @@ static int dc_ic_probe(struct platform_device *pdev)
 	}
 	irq_domain_set_pm_device(data->domain, dev);
 
-	ret = irq_alloc_domain_generic_chips(data->domain, 32, 1, "DC",
+	ret = irq_alloc_domain_generic_chips(data->domain, 32, 1, "DC-IC",
 					     handle_level_irq, 0, 0, 0);
 	if (ret) {
 		dev_err(dev, "failed to alloc generic IRQ chips: %d\n", ret);
@@ -192,30 +324,36 @@ static int dc_ic_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	for (i = 0; i < IRQ_COUNT; i += 32) {
-		gc = irq_get_domain_generic_chip(data->domain, i);
+	for (i = 0; i < variant->banks; i++) {
+		const struct dc_ic_regs *r;
+
+		r = variant->user_regs ? variant->user_regs : variant->regs;
+
+		gc = irq_get_domain_generic_chip(data->domain, i * 32);
 		gc->reg_base = base;
-		gc->unused = unused_irq[i / 32];
+		gc->unused   = variant->unused[i];
 		ct = gc->chip_types;
-		ct->chip.irq_ack = irq_gc_ack_set_bit;
-		ct->chip.irq_mask = irq_gc_mask_clr_bit;
+		ct->chip.irq_ack    = irq_gc_ack_set_bit;
+		ct->chip.irq_mask   = irq_gc_mask_clr_bit;
 		ct->chip.irq_unmask = irq_gc_mask_set_bit;
-		ct->regs.ack = USERINTERRUPTCLEAR(i / 32);
-		ct->regs.mask = USERINTERRUPTENABLE(i / 32);
+		ct->regs.ack  = r[i].clear;
+		ct->regs.mask = r[i].enable;
 	}
 
-	for (i = 0; i < IRQ_COUNT; i++) {
-		/* skip the reserved IRQ */
-		if (i == IRQ_RESERVED)
+	/* ---- chained handlers ---- */
+
+	for (i = 0; i < variant->irq_count; i++) {
+		if (i == variant->irq_reserved)
+			continue;
+		if (data->parent_irq[i] < 0)
 			continue;
 
-		data->irq[i] = irq_of_parse_and_map(dev->of_node, i);
+		data->entry[i].data  = data;
+		data->entry[i].hwirq = i;
 
-		entry[i].data = data;
-		entry[i].irq = i;
-
-		irq_set_chained_handler_and_data(data->irq[i],
-						 dc_ic_irq_handler, &entry[i]);
+		irq_set_chained_handler_and_data(data->parent_irq[i],
+						 dc_ic_irq_handler,
+						 &data->entry[i]);
 	}
 
 	return 0;
@@ -226,37 +364,36 @@ static void dc_ic_remove(struct platform_device *pdev)
 	struct dc_ic_data *data = dev_get_drvdata(&pdev->dev);
 	int i;
 
-	for (i = 0; i < IRQ_COUNT; i++) {
-		if (i == IRQ_RESERVED)
+	for (i = 0; i < data->variant->irq_count; i++) {
+		if (i == data->variant->irq_reserved)
 			continue;
-
-		irq_set_chained_handler_and_data(data->irq[i], NULL, NULL);
+		if (data->parent_irq[i] < 0)
+			continue;
+		irq_set_chained_handler_and_data(data->parent_irq[i],
+						 NULL, NULL);
 	}
 
 	irq_domain_remove(data->domain);
-
 	pm_runtime_put_sync(&pdev->dev);
 }
+
+/* ------------------------------------------------------------------ */
+/* Runtime PM                                                          */
+/* ------------------------------------------------------------------ */
 
 static int dc_ic_runtime_suspend(struct device *dev)
 {
 	struct dc_ic_data *data = dev_get_drvdata(dev);
 
 	clk_disable_unprepare(data->clk_axi);
-
 	return 0;
 }
 
 static int dc_ic_runtime_resume(struct device *dev)
 {
 	struct dc_ic_data *data = dev_get_drvdata(dev);
-	int ret;
 
-	ret = clk_prepare_enable(data->clk_axi);
-	if (ret)
-		dev_err(dev, "failed to enable AXI clock: %d\n", ret);
-
-	return ret;
+	return clk_prepare_enable(data->clk_axi);
 }
 
 static const struct dev_pm_ops dc_ic_pm_ops = {
@@ -265,18 +402,25 @@ static const struct dev_pm_ops dc_ic_pm_ops = {
 	RUNTIME_PM_OPS(dc_ic_runtime_suspend, dc_ic_runtime_resume, NULL)
 };
 
+/* ------------------------------------------------------------------ */
+/* Driver registration                                                 */
+/* ------------------------------------------------------------------ */
+
 static const struct of_device_id dc_ic_dt_ids[] = {
-	{ .compatible = "fsl,imx8qxp-dc-intc", },
+	{ .compatible = "fsl,imx8qxp-dc-intc",
+	  .data       = &dc_ic_8qxp },
+	{ .compatible = "fsl,imx95-dc-intc",
+	  .data       = &dc_ic_imx95 },
 	{ /* sentinel */ }
 };
 
 struct platform_driver dc_ic_driver = {
-	.probe = dc_ic_probe,
+	.probe  = dc_ic_probe,
 	.remove = dc_ic_remove,
 	.driver = {
-		.name = "imx8-dc-intc",
-		.suppress_bind_attrs = true,
-		.of_match_table	= dc_ic_dt_ids,
-		.pm = pm_sleep_ptr(&dc_ic_pm_ops),
+		.name			= "imx8-dc-intc",
+		.suppress_bind_attrs	= true,
+		.of_match_table		= dc_ic_dt_ids,
+		.pm			= pm_sleep_ptr(&dc_ic_pm_ops),
 	},
 };

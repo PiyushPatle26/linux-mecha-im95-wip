@@ -95,6 +95,7 @@ void dc_tc_set_operation_mode(struct dc_tc *tc)
 {
 	regmap_write_bits(tc->reg, TCON_CTRL, BYPASS, 0);
 }
+EXPORT_SYMBOL_GPL(dc_tc_set_operation_mode);
 
 void dc_tc_cfg_videomode(struct dc_tc *tc, struct drm_display_mode *m)
 {
@@ -165,6 +166,7 @@ void dc_tc_cfg_videomode(struct dc_tc *tc, struct drm_display_mode *m)
 	regmap_write(tc->reg, SMXSIGS(3), 0x6);
 	regmap_write(tc->reg, SMXFCTTABLE(3), 0x2);
 }
+EXPORT_SYMBOL_GPL(dc_tc_cfg_videomode);
 
 void dc_tc_init(struct dc_tc *tc)
 {

@@ -15,24 +15,47 @@
 #include <drm/drm_fourcc.h>
 
 #include "dc-dprc.h"
+#include "dc-lib.h"
 #include "dc-pe.h"
 
 #define FRAC_OFFSET			0x28
 
 #define STATICCONTROL			0x8
-#define BURSTBUFFERMANAGEMENT		0xc
+
+/*
+ * Per-fraction register base offsets (without REG_OFFSET1).
+ * i.MX95 combines these with fu->reg_offset1 and the downstream
+ * fraction stride (0x38) at bind time.  i.MX8QXP uses separate
+ * legacy macros with FRAC_OFFSET (0x28) stride.
+ */
+#define _BASEADDRESS			0x00
+#define _SOURCEBUFFERATTRIBUTES		0x10
+#define _SOURCEBUFFERDIMENSION		0x14
+#define _COLORCOMPONENTBITS		0x18
+#define _COLORCOMPONENTSHIFT		0x1c
+#define _LAYEROFFSET			0x20
+#define _CLIPWINDOWOFFSET		0x24
+#define _CLIPWINDOWDIMENSIONS		0x28
+#define _CONSTANTCOLOR			0x2c
+#define _LAYERPROPERTY			0x30
 
 /* COLORCOMPONENTBITS */
 #define R_BITS(x)			FIELD_PREP_CONST(GENMASK(27, 24), (x))
 #define G_BITS(x)			FIELD_PREP_CONST(GENMASK(19, 16), (x))
 #define B_BITS(x)			FIELD_PREP_CONST(GENMASK(11, 8), (x))
 #define A_BITS(x)			FIELD_PREP_CONST(GENMASK(3, 0), (x))
+#define Y_BITS(x)			R_BITS(x)
+#define U_BITS(x)			G_BITS(x)
+#define V_BITS(x)			B_BITS(x)
 
 /* COLORCOMPONENTSHIFT */
 #define R_SHIFT(x)			FIELD_PREP_CONST(GENMASK(28, 24), (x))
 #define G_SHIFT(x)			FIELD_PREP_CONST(GENMASK(20, 16), (x))
 #define B_SHIFT(x)			FIELD_PREP_CONST(GENMASK(12, 8), (x))
 #define A_SHIFT(x)			FIELD_PREP_CONST(GENMASK(4, 0), (x))
+#define Y_SHIFT(x)			R_SHIFT(x)
+#define U_SHIFT(x)			G_SHIFT(x)
+#define V_SHIFT(x)			B_SHIFT(x)
 
 /* LAYERPROPERTY */
 #define SOURCEBUFFERENABLE		BIT(31)
@@ -48,6 +71,23 @@
 #define INPUTSELECT(x)			FIELD_PREP(INPUTSELECT_MASK, (x))
 #define RASTERMODE_MASK			GENMASK(2, 0)
 #define RASTERMODE(x)			FIELD_PREP(RASTERMODE_MASK, (x))
+
+/*
+ * struct dc_lib_fu_pixel_format - pixel format descriptor for FetchUnit
+ */
+struct dc_lib_fu_pixel_format {
+	u32 pixel_format;
+	u32 bits;
+	u32 shifts;
+};
+
+/*
+ * struct dc_lib_fu_match_data - per-SoC FetchUnit parameters
+ */
+struct dc_lib_fu_match_data {
+	const struct dc_lib_fu_pixel_format *pixel_formats;
+	int pixel_formats_cnt;
+};
 
 enum dc_yuvconversionmode {
 	YUVCONVERSIONMODE_OFF,
@@ -102,8 +142,10 @@ struct dc_fu_ops {
 
 struct dc_fu {
 	struct device *dev;
+	void __iomem *base_cfg;
 	struct regmap *reg_pec;
 	struct regmap *reg_cfg;
+	const struct dc_lib_fu_match_data *match_data;
 	char name[21];
 	u32 reg_baseaddr[DC_FETCHUNIT_FRAC_NUM];
 	u32 reg_sourcebufferattributes[DC_FETCHUNIT_FRAC_NUM];
@@ -113,6 +155,12 @@ struct dc_fu {
 	u32 reg_clipwindowdimensions[DC_FETCHUNIT_FRAC_NUM];
 	u32 reg_constantcolor[DC_FETCHUNIT_FRAC_NUM];
 	u32 reg_layerproperty[DC_FETCHUNIT_FRAC_NUM];
+	u32 reg_colorcomponentbits[DC_FETCHUNIT_FRAC_NUM];
+	u32 reg_colorcomponentshift[DC_FETCHUNIT_FRAC_NUM];
+	u32 reg_framedimensions;
+	u32 reg_burstbuffermanagement;
+	unsigned int reg_offset1;
+	unsigned int reg_offset2;
 	unsigned int id;
 	enum dc_link_id link_id;
 	struct dc_fu_ops ops;
@@ -121,6 +169,8 @@ struct dc_fu {
 };
 
 extern const struct dc_fu_ops dc_fu_common_ops;
+extern const struct dc_lib_fu_match_data dc_fu_imx8qxp_data;
+extern const struct dc_lib_fu_match_data dc_fu_imx95_data;
 
 void dc_fu_get_pixel_format_bits(struct dc_fu *fu, u32 format, u32 *bits);
 void dc_fu_get_pixel_format_shifts(struct dc_fu *fu, u32 format, u32 *shifts);

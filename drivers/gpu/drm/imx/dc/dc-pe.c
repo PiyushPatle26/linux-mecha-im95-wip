@@ -68,7 +68,39 @@ void dc_pe_post_bind(struct dc_drm_device *dc_drm)
 
 	for (i = 0; i < DC_LB_CNT; i++)
 		pe->lb[i] = dc_drm->lb[i];
+
+	/*
+	 * i.MX95 has no pixel-engine DT node, so dc_pe_runtime_resume()
+	 * is never called.  Initialize all sub-blocks here instead so that
+	 * SHDEN is written to STATICCONTROL before any register access.
+	 */
+	if (!pe->dev) {
+		for (i = 0; i < ARRAY_SIZE(pe->cf_safe); i++)
+			if (pe->cf_safe[i])
+				dc_cf_init(pe->cf_safe[i]);
+
+		for (i = 0; i < ARRAY_SIZE(pe->cf_cont); i++)
+			if (pe->cf_cont[i])
+				dc_cf_init(pe->cf_cont[i]);
+
+		for (i = 0; i < ARRAY_SIZE(pe->ed_safe); i++)
+			if (pe->ed_safe[i])
+				dc_ed_init(pe->ed_safe[i]);
+
+		for (i = 0; i < ARRAY_SIZE(pe->ed_cont); i++)
+			if (pe->ed_cont[i])
+				dc_ed_init(pe->ed_cont[i]);
+
+		for (i = 0; i < ARRAY_SIZE(pe->fu_disp); i++)
+			if (pe->fu_disp[i] && pe->fu_disp[i]->ops.init)
+				pe->fu_disp[i]->ops.init(pe->fu_disp[i]);
+
+		for (i = 0; i < ARRAY_SIZE(pe->lb); i++)
+			if (pe->lb[i])
+				dc_lb_init(pe->lb[i]);
+	}
 }
+EXPORT_SYMBOL_GPL(dc_pe_post_bind);
 
 static const struct component_ops dc_pe_ops = {
 	.bind = dc_pe_bind,
@@ -116,22 +148,28 @@ static int dc_pe_runtime_resume(struct device *dev)
 	}
 
 	for (i = 0; i < ARRAY_SIZE(pe->cf_safe); i++)
-		dc_cf_init(pe->cf_safe[i]);
+		if (pe->cf_safe[i])
+			dc_cf_init(pe->cf_safe[i]);
 
 	for (i = 0; i < ARRAY_SIZE(pe->cf_cont); i++)
-		dc_cf_init(pe->cf_cont[i]);
+		if (pe->cf_cont[i])
+			dc_cf_init(pe->cf_cont[i]);
 
 	for (i = 0; i < ARRAY_SIZE(pe->ed_safe); i++)
-		dc_ed_init(pe->ed_safe[i]);
+		if (pe->ed_safe[i])
+			dc_ed_init(pe->ed_safe[i]);
 
 	for (i = 0; i < ARRAY_SIZE(pe->ed_cont); i++)
-		dc_ed_init(pe->ed_cont[i]);
+		if (pe->ed_cont[i])
+			dc_ed_init(pe->ed_cont[i]);
 
 	for (i = 0; i < ARRAY_SIZE(pe->fu_disp); i++)
-		pe->fu_disp[i]->ops.init(pe->fu_disp[i]);
+		if (pe->fu_disp[i] && pe->fu_disp[i]->ops.init)
+			pe->fu_disp[i]->ops.init(pe->fu_disp[i]);
 
 	for (i = 0; i < ARRAY_SIZE(pe->lb); i++)
-		dc_lb_init(pe->lb[i]);
+		if (pe->lb[i])
+			dc_lb_init(pe->lb[i]);
 
 	return 0;
 }

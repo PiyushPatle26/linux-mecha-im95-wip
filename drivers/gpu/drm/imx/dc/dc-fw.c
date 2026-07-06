@@ -6,6 +6,7 @@
 #include <linux/component.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 
@@ -129,6 +130,7 @@ static int dc_fw_bind(struct device *dev, struct device *master, void *data)
 	struct resource *res_pec;
 	void __iomem *base_pec;
 	void __iomem *base_cfg;
+	const struct dc_lib_fu_match_data *match_data;
 	struct dc_fw *fw;
 	struct dc_fu *fu;
 	int ret, i, id;
@@ -139,6 +141,12 @@ static int dc_fw_bind(struct device *dev, struct device *master, void *data)
 
 	fu = &fw->fu;
 	fu->dev = dev;
+
+	match_data = of_match_node(dev->driver->of_match_table,
+				   dev->of_node)->data;
+	if (!match_data)
+		return -EINVAL;
+	fu->match_data = match_data;
 
 	ret = dc_fu_get_dprc(fu);
 	if (ret)
@@ -211,7 +219,8 @@ static void dc_fw_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id dc_fw_dt_ids[] = {
-	{ .compatible = "fsl,imx8qxp-dc-fetchwarp" },
+	{ .compatible = "fsl,imx8qxp-dc-fetchwarp",
+	  .data = &dc_fu_imx8qxp_data },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, dc_fw_dt_ids);

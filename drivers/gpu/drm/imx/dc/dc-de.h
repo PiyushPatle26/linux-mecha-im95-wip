@@ -11,6 +11,8 @@
 #include <linux/regmap.h>
 #include <drm/drm_modes.h>
 
+#include "dc-lib.h"
+
 #define DC_DISPLAYS	2
 
 #define DC_FRAMEGEN_MAX_FRAME_INDEX	0x3ffff
@@ -20,6 +22,8 @@ struct dc_fg {
 	struct device *dev;
 	struct regmap *reg;
 	struct clk *clk_disp;
+	unsigned int id;
+	const struct dc_lib_fg_offsets *offsets;
 };
 
 struct dc_tc {
@@ -45,6 +49,8 @@ void dc_fg_shdtokgen(struct dc_fg *fg);
 u32 dc_fg_get_frame_index(struct dc_fg *fg);
 u32 dc_fg_get_line_index(struct dc_fg *fg);
 bool dc_fg_wait_for_frame_index_moving(struct dc_fg *fg);
+bool dc_fg_wait_for_primary_syncup(struct dc_fg *fg);
+void dc_fg_primary_clear_channel_status(struct dc_fg *fg);
 bool dc_fg_secondary_requests_to_read_empty_fifo(struct dc_fg *fg);
 void dc_fg_secondary_clear_channel_status(struct dc_fg *fg);
 int dc_fg_wait_for_secondary_syncup(struct dc_fg *fg);

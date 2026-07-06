@@ -6,7 +6,9 @@
 #include <linux/bitfield.h>
 #include <linux/bitops.h>
 #include <linux/bits.h>
+#include <linux/io.h>
 #include <linux/math.h>
+#include <linux/module.h>
 
 #include "dc-fu.h"
 #include "dc-pe.h"
@@ -20,6 +22,10 @@
 
 /* BURSTBUFFERMANAGEMENT */
 #define LINEMODE_MASK			BIT(31)
+#define COMBINERLINEFLUSH_ENABLE	BIT(30)
+#define COMBINERTIMEOUT_ENABLE		BIT(29)
+#define SETMAXBURSTLENGTH_MASK		GENMASK(20, 13)
+#define SETMAXBURSTLENGTH(x)		FIELD_PREP(SETMAXBURSTLENGTH_MASK, (x))
 #define SETBURSTLENGTH_MASK		GENMASK(12, 8)
 #define SETBURSTLENGTH(x)		FIELD_PREP(SETBURSTLENGTH_MASK, (x))
 #define SETNUMBUFFERS_MASK		GENMASK(7, 0)
@@ -47,21 +53,7 @@
 #define CLIPWINDOWHEIGHT(x)		FIELD_PREP(GENMASK(29, 16), (x) - 1)
 #define CLIPWINDOWWIDTH(x)		FIELD_PREP(GENMASK(13, 0), (x) - 1)
 
-enum dc_linemode {
-	/*
-	 * Mandatory setting for operation in the Display Controller.
-	 * Works also for Blit Engine with marginal performance impact.
-	 */
-	LINEMODE_DISPLAY = 0,
-};
-
-struct dc_fu_pixel_format {
-	u32 pixel_format;
-	u32 bits;
-	u32 shifts;
-};
-
-static const struct dc_fu_pixel_format pixel_formats[] = {
+static const struct dc_lib_fu_pixel_format dc_fu_imx8qxp_formats[] = {
 	{
 		DRM_FORMAT_XRGB8888,
 		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(0),
@@ -69,13 +61,91 @@ static const struct dc_fu_pixel_format pixel_formats[] = {
 	},
 };
 
+const struct dc_lib_fu_match_data dc_fu_imx8qxp_data = {
+	.pixel_formats = dc_fu_imx8qxp_formats,
+	.pixel_formats_cnt = ARRAY_SIZE(dc_fu_imx8qxp_formats),
+};
+
+static const struct dc_lib_fu_pixel_format dc_fu_imx95_formats[] = {
+	{
+		DRM_FORMAT_ARGB8888,
+		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(8),
+		R_SHIFT(16) | G_SHIFT(8)  | B_SHIFT(0)  | A_SHIFT(24),
+	}, {
+		DRM_FORMAT_XRGB8888,
+		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(0),
+		R_SHIFT(16) | G_SHIFT(8)  | B_SHIFT(0)  | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_ABGR8888,
+		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(8),
+		R_SHIFT(0)  | G_SHIFT(8)  | B_SHIFT(16) | A_SHIFT(24),
+	}, {
+		DRM_FORMAT_XBGR8888,
+		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(0),
+		R_SHIFT(0)  | G_SHIFT(8)  | B_SHIFT(16) | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_RGBA8888,
+		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(8),
+		R_SHIFT(24) | G_SHIFT(16) | B_SHIFT(8)  | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_RGBX8888,
+		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(0),
+		R_SHIFT(24) | G_SHIFT(16) | B_SHIFT(8)  | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_BGRA8888,
+		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(8),
+		R_SHIFT(8)  | G_SHIFT(16) | B_SHIFT(24) | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_BGRX8888,
+		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(0),
+		R_SHIFT(8)  | G_SHIFT(16) | B_SHIFT(24) | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_RGB888,
+		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(0),
+		R_SHIFT(16) | G_SHIFT(8)  | B_SHIFT(0)  | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_BGR888,
+		R_BITS(8)   | G_BITS(8)   | B_BITS(8)   | A_BITS(0),
+		R_SHIFT(0)  | G_SHIFT(8)  | B_SHIFT(16) | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_RGB565,
+		R_BITS(5)   | G_BITS(6)   | B_BITS(5)   | A_BITS(0),
+		R_SHIFT(11) | G_SHIFT(5)  | B_SHIFT(0)  | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_YUYV,
+		Y_BITS(8)   | U_BITS(8)   | V_BITS(8)   | A_BITS(0),
+		Y_SHIFT(0)  | U_SHIFT(8)  | V_SHIFT(8)  | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_UYVY,
+		Y_BITS(8)   | U_BITS(8)   | V_BITS(8)   | A_BITS(0),
+		Y_SHIFT(8)  | U_SHIFT(0)  | V_SHIFT(0)  | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_NV12,
+		Y_BITS(8)   | U_BITS(8)   | V_BITS(8)   | A_BITS(0),
+		Y_SHIFT(0)  | U_SHIFT(0)  | V_SHIFT(8)  | A_SHIFT(0),
+	}, {
+		DRM_FORMAT_NV21,
+		Y_BITS(8)   | U_BITS(8)   | V_BITS(8)   | A_BITS(0),
+		Y_SHIFT(0)  | U_SHIFT(8)  | V_SHIFT(0)  | A_SHIFT(0),
+	},
+};
+
+const struct dc_lib_fu_match_data dc_fu_imx95_data = {
+	.pixel_formats = dc_fu_imx95_formats,
+	.pixel_formats_cnt = ARRAY_SIZE(dc_fu_imx95_formats),
+};
+
+enum dc_linemode {
+	LINEMODE_DISPLAY = 0,
+};
+
 void dc_fu_get_pixel_format_bits(struct dc_fu *fu, u32 format, u32 *bits)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(pixel_formats); i++) {
-		if (pixel_formats[i].pixel_format == format) {
-			*bits = pixel_formats[i].bits;
+	for (i = 0; i < fu->match_data->pixel_formats_cnt; i++) {
+		if (fu->match_data->pixel_formats[i].pixel_format == format) {
+			*bits = fu->match_data->pixel_formats[i].bits;
 			return;
 		}
 	}
@@ -86,42 +156,18 @@ dc_fu_get_pixel_format_shifts(struct dc_fu *fu, u32 format, u32 *shifts)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(pixel_formats); i++) {
-		if (pixel_formats[i].pixel_format == format) {
-			*shifts = pixel_formats[i].shifts;
+	for (i = 0; i < fu->match_data->pixel_formats_cnt; i++) {
+		if (fu->match_data->pixel_formats[i].pixel_format == format) {
+			*shifts = fu->match_data->pixel_formats[i].shifts;
 			return;
 		}
 	}
-}
-
-static inline void dc_fu_enable_shden(struct dc_fu *fu)
-{
-	regmap_write_bits(fu->reg_cfg, STATICCONTROL, SHDEN, SHDEN);
-}
-
-static inline void dc_fu_baddr_autoupdate(struct dc_fu *fu, u8 layer_mask)
-{
-	regmap_write_bits(fu->reg_cfg, STATICCONTROL,
-			  BASEADDRESSAUTOUPDATE_MASK,
-			  BASEADDRESSAUTOUPDATE(layer_mask));
 }
 
 void dc_fu_shdldreq_sticky(struct dc_fu *fu, u8 layer_mask)
 {
 	regmap_write_bits(fu->reg_cfg, STATICCONTROL, SHDLDREQSTICKY_MASK,
 			  SHDLDREQSTICKY(layer_mask));
-}
-
-static inline void dc_fu_set_linemode(struct dc_fu *fu, enum dc_linemode mode)
-{
-	regmap_write_bits(fu->reg_cfg, BURSTBUFFERMANAGEMENT, LINEMODE_MASK,
-			  mode);
-}
-
-static inline void dc_fu_set_numbuffers(struct dc_fu *fu, unsigned int num)
-{
-	regmap_write_bits(fu->reg_cfg, BURSTBUFFERMANAGEMENT,
-			  SETNUMBUFFERS_MASK, SETNUMBUFFERS(num));
 }
 
 static unsigned int dc_fu_burst_size_fixup(dma_addr_t baddr)
@@ -148,7 +194,7 @@ static void dc_fu_set_burstlength(struct dc_fu *fu, dma_addr_t baddr)
 	burst_size = dc_fu_burst_size_fixup(baddr);
 	burst_length = burst_size / 8;
 
-	regmap_write_bits(fu->reg_cfg, BURSTBUFFERMANAGEMENT,
+	regmap_write_bits(fu->reg_cfg, fu->reg_burstbuffermanagement,
 			  SETBURSTLENGTH_MASK, SETBURSTLENGTH(burst_length));
 }
 
@@ -260,23 +306,67 @@ const struct dc_fu_ops *dc_fu_get_ops(struct dc_fu *fu)
 {
 	return &fu->ops;
 }
+EXPORT_SYMBOL_GPL(dc_fu_get_ops);
 
 void dc_fu_common_hw_init(struct dc_fu *fu)
 {
-	enum dc_fu_frac i;
+	/*
+	 * STATICCONTROL and BURSTBUFFERMANAGEMENT must be read from hardware
+	 * to preserve hardware-default bits.  REGCACHE_FLAT always returns
+	 * the cached value without consulting the volatile table, so
+	 * regmap_write_bits on uncached registers reads 0 and clears
+	 * default bits.  Use direct readl/writel for these two registers
+	 * during init, then sync the cache via regmap_write.
+	 */
+	if (fu->base_cfg) {
+		u32 val;
 
-	dc_fu_baddr_autoupdate(fu, 0x0);
-	dc_fu_enable_shden(fu);
-	dc_fu_set_linemode(fu, LINEMODE_DISPLAY);
-	dc_fu_set_numbuffers(fu, 16);
+		val = readl(fu->base_cfg + STATICCONTROL);
+		val &= ~(BASEADDRESSAUTOUPDATE_MASK | SHDLDREQSTICKY_MASK);
+		val |= SHDEN;
+		writel(val, fu->base_cfg + STATICCONTROL);
+		regmap_write(fu->reg_cfg, STATICCONTROL, val);
 
-	for (i = DC_FETCHUNIT_FRAC0; i < DC_FETCHUNIT_FRAC_NUM; i++) {
-		dc_fu_layeroffset(fu, i, 0, 0);
-		dc_fu_clipoffset(fu, i, 0, 0);
-		dc_fu_clipdimensions(fu, i, 1, 1);
-		dc_fu_disable_src_buf(fu, i);
-		dc_fu_set_pixel_blend_mode(fu, i);
+		val = readl(fu->base_cfg + fu->reg_burstbuffermanagement);
+		val &= ~(LINEMODE_MASK |
+			 COMBINERLINEFLUSH_ENABLE |
+			 COMBINERTIMEOUT_ENABLE |
+			 SETMAXBURSTLENGTH_MASK |
+			 SETBURSTLENGTH_MASK |
+			 SETNUMBUFFERS_MASK);
+		val |= SETNUMBUFFERS(16) |
+		       SETBURSTLENGTH(16) |
+		       SETMAXBURSTLENGTH(64);
+		writel(val, fu->base_cfg + fu->reg_burstbuffermanagement);
+		regmap_write(fu->reg_cfg, fu->reg_burstbuffermanagement, val);
+	} else {
+		regmap_write_bits(fu->reg_cfg, STATICCONTROL, SHDEN, SHDEN);
+		regmap_write_bits(fu->reg_cfg, fu->reg_burstbuffermanagement,
+				  SETNUMBUFFERS_MASK, SETNUMBUFFERS(16));
+		regmap_write_bits(fu->reg_cfg, fu->reg_burstbuffermanagement,
+				  SETBURSTLENGTH_MASK, SETBURSTLENGTH(16));
+		regmap_write_bits(fu->reg_cfg, fu->reg_burstbuffermanagement,
+				  SETMAXBURSTLENGTH_MASK,
+				  SETMAXBURSTLENGTH(64));
+		regmap_write_bits(fu->reg_cfg, fu->reg_burstbuffermanagement,
+				  COMBINERTIMEOUT_ENABLE, 0);
+		regmap_write_bits(fu->reg_cfg, fu->reg_burstbuffermanagement,
+				  COMBINERLINEFLUSH_ENABLE, 0);
 	}
+
+	/*
+	 * Only initialize the first fraction (FRAC0) during HW init.
+	 * Each fetch unit on i.MX95 maps to a single plane, so additional
+	 * fractions may not have valid register backing and accessing them
+	 * can trigger bus errors.  Per-fraction registers for additional
+	 * fractions are initialized at plane setup time.
+	 */
+	dc_fu_layeroffset(fu, DC_FETCHUNIT_FRAC0, 0, 0);
+	dc_fu_clipoffset(fu, DC_FETCHUNIT_FRAC0, 0, 0);
+	dc_fu_clipdimensions(fu, DC_FETCHUNIT_FRAC0, 1, 1);
+	regmap_write(fu->reg_cfg, fu->reg_sourcebufferattributes[DC_FETCHUNIT_FRAC0], 0);
+	regmap_write(fu->reg_cfg, fu->reg_layerproperty[DC_FETCHUNIT_FRAC0], 0);
+	regmap_write(fu->reg_cfg, fu->reg_constantcolor[DC_FETCHUNIT_FRAC0], 0);
 }
 
 int dc_fu_get_dprc(struct dc_fu *fu)

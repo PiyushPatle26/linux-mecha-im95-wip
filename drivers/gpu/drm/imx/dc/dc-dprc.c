@@ -262,6 +262,7 @@ void dc_dprc_disable_repeat_en(struct dc_dprc *dprc)
 	regmap_write(dprc->reg, SYSTEM_CTRL0 + CLR, REPEAT_EN);
 	dev_dbg(dprc->dev, "disable REPEAT_EN\n");
 }
+EXPORT_SYMBOL_GPL(dc_dprc_disable_repeat_en);
 
 void dc_dprc_disable(struct dc_dprc *dprc)
 {
@@ -271,6 +272,7 @@ void dc_dprc_disable(struct dc_dprc *dprc)
 
 	dev_dbg(dprc->dev, "disable\n");
 }
+EXPORT_SYMBOL_GPL(dc_dprc_disable);
 
 void dc_dprc_disable_at_boot(struct dc_dprc *dprc)
 {
@@ -280,6 +282,7 @@ void dc_dprc_disable_at_boot(struct dc_dprc *dprc)
 
 	dev_dbg(dprc->dev, "disable at boot\n");
 }
+EXPORT_SYMBOL_GPL(dc_dprc_disable_at_boot);
 
 static void dc_dprc_ctrl_done_handle(struct dc_dprc *dprc)
 {

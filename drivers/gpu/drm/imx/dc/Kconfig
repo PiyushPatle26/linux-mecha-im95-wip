@@ -1,7 +1,5 @@
-config DRM_IMX8_DC
-	tristate "Freescale i.MX8 Display Controller Graphics"
-	depends on DRM && COMMON_CLK && OF && (ARCH_MXC || COMPILE_TEST)
-	depends on IMX_SCU
+config DRM_IMX_DC_LIB
+	tristate
 	select DRM_CLIENT_SELECTION
 	select DRM_GEM_DMA_HELPER
 	select DRM_KMS_HELPER
@@ -10,5 +8,20 @@ config DRM_IMX8_DC
 	select GENERIC_IRQ_CHIP
 	select REGMAP
 	select REGMAP_MMIO
+
+config DRM_IMX8QXP_DC
+	tristate "NXP i.MX8QXP DC8000 Display Controller"
+	depends on DRM && COMMON_CLK && OF && (ARCH_MXC || COMPILE_TEST)
+	depends on IMX_SCU
+	select DRM_IMX_DC_LIB
 	help
-	  enable Freescale i.MX8 Display Controller(DC) graphics support
+	  DRM driver for the DC8000 display controller found in NXP i.MX8QXP.
+	  Enables LVDS and DisplayPort output via the DC component framework.
+
+config DRM_IMX95_DC
+	tristate "NXP i.MX95 DC8000 Display Controller"
+	depends on DRM && COMMON_CLK && OF && (ARCH_MXC || COMPILE_TEST)
+	select DRM_IMX_DC_LIB
+	help
+	  DRM driver for the DC8000 display controller found in NXP i.MX95.
+	  Enables LVDS output via pixel-interleaver -> LDB -> LVDS PHY -> IT6263 HDMI.

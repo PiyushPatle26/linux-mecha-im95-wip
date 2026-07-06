@@ -8,33 +8,28 @@
 #include <linux/component.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 
 #include "dc-drv.h"
+#include "dc-lib.h"
 #include "dc-pe.h"
 
-#define PIXENGCFG_STATIC	0x8
-#define  DIV_MASK		GENMASK(23, 16)
-#define  DIV(x)			FIELD_PREP(DIV_MASK, (x))
-#define  DIV_RESET		0x80
-#define  SYNC_MODE		BIT(8)
-#define  SINGLE			0
-#define  POWERDOWN		BIT(4)
+#define DIV_MASK		GENMASK(23, 16)
+#define DIV(x)			FIELD_PREP(DIV_MASK, (x))
+#define DIV_RESET		0x80
+#define SYNC_MODE		BIT(8)
+#define SINGLE			0
+#define POWERDOWN		BIT(4)
+#define SYNC_TRIGGER		BIT(0)
+#define SYNC_BUSY		BIT(8)	/* in ED_PIXENGCFG_STATUS */
+#define PERFCOUNTMODE		BIT(12)
+#define KICK_MODE		BIT(8)
+#define EXTERNAL		BIT(8)
+#define GAMMAAPPLYENABLE	BIT(0)
 
-#define PIXENGCFG_DYNAMIC	0xc
-
-#define PIXENGCFG_TRIGGER	0x14
-#define  SYNC_TRIGGER		BIT(0)
-
-#define STATICCONTROL		0x8
-#define  PERFCOUNTMODE		BIT(12)
-#define  KICK_MODE		BIT(8)
-#define  EXTERNAL		BIT(8)
-
-#define CONTROL			0xc
-#define  GAMMAAPPLYENABLE	BIT(0)
-
+/* i.MX8QXP instance layout */
 static const struct dc_subdev_info dc_ed_info[] = {
 	{ .reg_start = 0x56180980, .id = 0, },
 	{ .reg_start = 0x56180a00, .id = 1, },
@@ -42,10 +37,57 @@ static const struct dc_subdev_info dc_ed_info[] = {
 	{ .reg_start = 0x56180a40, .id = 5, },
 };
 
+static const u32 dc_ed_src_sels[] = {
+	LINK_ID_NONE,
+	LINK_ID_CONSTFRAME0,
+	LINK_ID_CONSTFRAME1,
+	LINK_ID_CONSTFRAME4,
+	LINK_ID_CONSTFRAME5,
+	LINK_ID_LAYERBLEND3,
+	LINK_ID_LAYERBLEND2,
+	LINK_ID_LAYERBLEND1,
+	LINK_ID_LAYERBLEND0,
+};
+
+static const struct dc_lib_ed_match_data dc_ed_imx8qxp_data = {
+	.subdev_info     = dc_ed_info,
+	.subdev_info_cnt = ARRAY_SIZE(dc_ed_info),
+	.src_sels        = dc_ed_src_sels,
+	.src_sels_cnt    = ARRAY_SIZE(dc_ed_src_sels),
+};
+
+/* i.MX95 instance layout: PEC addresses are base 0x4b400000 + aux_ofs from dpu95-core */
+static const struct dc_subdev_info dc_ed_imx95_info[] = {
+	{ .reg_start = 0x4b511000, .id = 0, },
+	{ .reg_start = 0x4b551000, .id = 1, },
+	{ .reg_start = 0x4b521000, .id = 4, },
+	{ .reg_start = 0x4b561000, .id = 5, },
+};
+
+static const u32 dc_ed_imx95_src_sels[] = {
+	IMX95_LINK_ID_CONSTFRAME0,
+	IMX95_LINK_ID_CONSTFRAME1,
+	IMX95_LINK_ID_CONSTFRAME4,
+	IMX95_LINK_ID_CONSTFRAME5,
+	IMX95_LINK_ID_LAYERBLEND6,
+	IMX95_LINK_ID_LAYERBLEND5,
+	IMX95_LINK_ID_LAYERBLEND4,
+	IMX95_LINK_ID_LAYERBLEND3,
+	IMX95_LINK_ID_LAYERBLEND2,
+	IMX95_LINK_ID_LAYERBLEND1,
+};
+
+static const struct dc_lib_ed_match_data dc_ed_imx95_data = {
+	.subdev_info     = dc_ed_imx95_info,
+	.subdev_info_cnt = ARRAY_SIZE(dc_ed_imx95_info),
+	.src_sels        = dc_ed_imx95_src_sels,
+	.src_sels_cnt    = ARRAY_SIZE(dc_ed_imx95_src_sels),
+};
+
 static const struct regmap_range dc_ed_pec_regmap_write_ranges[] = {
-	regmap_reg_range(PIXENGCFG_STATIC, PIXENGCFG_STATIC),
-	regmap_reg_range(PIXENGCFG_DYNAMIC, PIXENGCFG_DYNAMIC),
-	regmap_reg_range(PIXENGCFG_TRIGGER, PIXENGCFG_TRIGGER),
+	regmap_reg_range(ED_PIXENGCFG_STATIC, ED_PIXENGCFG_STATIC),
+	regmap_reg_range(ED_PIXENGCFG_DYNAMIC, ED_PIXENGCFG_DYNAMIC),
+	regmap_reg_range(ED_PIXENGCFG_TRIGGER, ED_PIXENGCFG_TRIGGER),
 };
 
 static const struct regmap_access_table dc_ed_pec_regmap_write_table = {
@@ -54,8 +96,9 @@ static const struct regmap_access_table dc_ed_pec_regmap_write_table = {
 };
 
 static const struct regmap_range dc_ed_pec_regmap_read_ranges[] = {
-	regmap_reg_range(PIXENGCFG_STATIC, PIXENGCFG_STATIC),
-	regmap_reg_range(PIXENGCFG_DYNAMIC, PIXENGCFG_DYNAMIC),
+	regmap_reg_range(ED_PIXENGCFG_STATIC, ED_PIXENGCFG_STATIC),
+	regmap_reg_range(ED_PIXENGCFG_DYNAMIC, ED_PIXENGCFG_DYNAMIC),
+	regmap_reg_range(ED_PIXENGCFG_STATUS, ED_PIXENGCFG_STATUS),
 };
 
 static const struct regmap_access_table dc_ed_pec_regmap_read_table = {
@@ -64,7 +107,8 @@ static const struct regmap_access_table dc_ed_pec_regmap_read_table = {
 };
 
 static const struct regmap_range dc_ed_pec_regmap_volatile_ranges[] = {
-	regmap_reg_range(PIXENGCFG_TRIGGER, PIXENGCFG_TRIGGER),
+	regmap_reg_range(ED_PIXENGCFG_TRIGGER, ED_PIXENGCFG_TRIGGER),
+	regmap_reg_range(ED_PIXENGCFG_STATUS, ED_PIXENGCFG_STATUS),
 };
 
 static const struct regmap_access_table dc_ed_pec_regmap_volatile_table = {
@@ -81,12 +125,12 @@ static const struct regmap_config dc_ed_pec_regmap_config = {
 	.wr_table = &dc_ed_pec_regmap_write_table,
 	.rd_table = &dc_ed_pec_regmap_read_table,
 	.volatile_table = &dc_ed_pec_regmap_volatile_table,
-	.max_register = PIXENGCFG_TRIGGER,
+	.max_register = ED_PIXENGCFG_STATUS,
 };
 
 static const struct regmap_range dc_ed_regmap_ranges[] = {
-	regmap_reg_range(STATICCONTROL, STATICCONTROL),
-	regmap_reg_range(CONTROL, CONTROL),
+	regmap_reg_range(ED_STATICCONTROL, ED_STATICCONTROL),
+	regmap_reg_range(ED_CONTROL, ED_CONTROL),
 };
 
 static const struct regmap_access_table dc_ed_regmap_access_table = {
@@ -102,126 +146,104 @@ static const struct regmap_config dc_ed_cfg_regmap_config = {
 	.fast_io = true,
 	.wr_table = &dc_ed_regmap_access_table,
 	.rd_table = &dc_ed_regmap_access_table,
-	.max_register = CONTROL,
+	.max_register = ED_CONTROL,
 };
 
-static const enum dc_link_id src_sels[] = {
-	LINK_ID_NONE,
-	LINK_ID_CONSTFRAME0,
-	LINK_ID_CONSTFRAME1,
-	LINK_ID_CONSTFRAME4,
-	LINK_ID_CONSTFRAME5,
-	LINK_ID_LAYERBLEND3,
-	LINK_ID_LAYERBLEND2,
-	LINK_ID_LAYERBLEND1,
-	LINK_ID_LAYERBLEND0,
-};
-
-static inline void dc_ed_pec_enable_shden(struct dc_ed *ed)
+void dc_ed_pec_clken(struct dc_ed *ed, u32 clken)
 {
-	regmap_write_bits(ed->reg_pec, PIXENGCFG_STATIC, SHDEN, SHDEN);
+	regmap_write_bits(ed->reg_pec, ED_PIXENGCFG_DYNAMIC, CLKEN_MASK,
+			  CLKEN(clken));
 }
-
-static inline void dc_ed_pec_poweron(struct dc_ed *ed)
-{
-	regmap_write_bits(ed->reg_pec, PIXENGCFG_STATIC, POWERDOWN, 0);
-}
-
-static inline void dc_ed_pec_sync_mode_single(struct dc_ed *ed)
-{
-	regmap_write_bits(ed->reg_pec, PIXENGCFG_STATIC, SYNC_MODE, SINGLE);
-}
-
-static inline void dc_ed_pec_div_reset(struct dc_ed *ed)
-{
-	regmap_write_bits(ed->reg_pec, PIXENGCFG_STATIC, DIV_MASK,
-			  DIV(DIV_RESET));
-}
+EXPORT_SYMBOL_GPL(dc_ed_pec_clken);
 
 void dc_ed_pec_src_sel(struct dc_ed *ed, enum dc_link_id src)
 {
+	const u32 *src_sels = ed->match_data->src_sels;
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(src_sels); i++) {
+	for (i = 0; i < ed->match_data->src_sels_cnt; i++) {
 		if (src_sels[i] == src) {
-			regmap_write(ed->reg_pec, PIXENGCFG_DYNAMIC, src);
+			regmap_write_bits(ed->reg_pec, ED_PIXENGCFG_DYNAMIC,
+					  GENMASK(5, 0), src);
 			return;
 		}
 	}
 }
+EXPORT_SYMBOL_GPL(dc_ed_pec_src_sel);
 
 int dc_ed_pec_src_sel_get(struct dc_ed *ed, enum dc_link_id *src)
 {
+	const u32 *sels = ed->match_data->src_sels;
+	int cnt = ed->match_data->src_sels_cnt;
 	u32 val;
+	int i;
 
-	regmap_read(ed->reg_pec, PIXENGCFG_DYNAMIC, &val);
+	regmap_read(ed->reg_pec, ED_PIXENGCFG_DYNAMIC, &val);
 
-	switch (val) {
-	case LINK_ID_NONE:
-	case LINK_ID_CONSTFRAME0:
-	case LINK_ID_CONSTFRAME4:
-	case LINK_ID_CONSTFRAME1:
-	case LINK_ID_CONSTFRAME5:
-	case LINK_ID_FETCHWARP2:
-	case LINK_ID_FETCHLAYER0:
-	case LINK_ID_LAYERBLEND0:
-	case LINK_ID_LAYERBLEND1:
-	case LINK_ID_LAYERBLEND2:
-	case LINK_ID_LAYERBLEND3:
-		*src = val;
-		dev_dbg(ed->dev, "get source selection: 0x%02x\n", val);
-		return 0;
-	default:
-		return -EINVAL;
+	for (i = 0; i < cnt; i++) {
+		if (sels[i] == val) {
+			*src = val;
+			dev_dbg(ed->dev, "get source selection: 0x%02x\n", val);
+			return 0;
+		}
 	}
+
+	return -EINVAL;
 }
+EXPORT_SYMBOL_GPL(dc_ed_pec_src_sel_get);
 
 void dc_ed_pec_sync_trigger(struct dc_ed *ed)
 {
-	regmap_write(ed->reg_pec, PIXENGCFG_TRIGGER, SYNC_TRIGGER);
+	regmap_write(ed->reg_pec, ED_PIXENGCFG_TRIGGER, SYNC_TRIGGER);
 }
+EXPORT_SYMBOL_GPL(dc_ed_pec_sync_trigger);
 
-static inline void dc_ed_enable_shden(struct dc_ed *ed)
+/*
+ * Wait for a pixel-routing shadow load to complete.  ED_PIXENGCFG_STATUS
+ * SYNC_BUSY is asserted from the sync trigger until the shadow load latches
+ * on a FrameGen frame boundary.  Used on i.MX95 where the shadow-load
+ * completion interrupt is not wired, so completion must be polled.
+ */
+int dc_ed_pec_sync_wait(struct dc_ed *ed)
 {
-	regmap_write_bits(ed->reg_cfg, STATICCONTROL, SHDEN, SHDEN);
-}
+	unsigned int val;
 
-static inline void dc_ed_kick_mode_external(struct dc_ed *ed)
-{
-	regmap_write_bits(ed->reg_cfg, STATICCONTROL, KICK_MODE, EXTERNAL);
+	return regmap_read_poll_timeout(ed->reg_pec, ED_PIXENGCFG_STATUS, val,
+					!(val & SYNC_BUSY), 5, 100000);
 }
-
-static inline void dc_ed_disable_perfcountmode(struct dc_ed *ed)
-{
-	regmap_write_bits(ed->reg_cfg, STATICCONTROL, PERFCOUNTMODE, 0);
-}
-
-static inline void dc_ed_disable_gamma_apply(struct dc_ed *ed)
-{
-	regmap_write_bits(ed->reg_cfg, CONTROL, GAMMAAPPLYENABLE, 0);
-}
+EXPORT_SYMBOL_GPL(dc_ed_pec_sync_wait);
 
 void dc_ed_init(struct dc_ed *ed)
 {
-	dc_ed_pec_enable_shden(ed);
-	dc_ed_pec_poweron(ed);
-	dc_ed_pec_sync_mode_single(ed);
-	dc_ed_pec_div_reset(ed);
-	dc_ed_enable_shden(ed);
-	dc_ed_disable_perfcountmode(ed);
-	dc_ed_kick_mode_external(ed);
-	dc_ed_disable_gamma_apply(ed);
+	regmap_write_bits(ed->reg_pec, ED_PIXENGCFG_STATIC, POWERDOWN, 0);
+	regmap_write_bits(ed->reg_pec, ED_PIXENGCFG_STATIC, SHDEN, SHDEN);
+	regmap_write_bits(ed->reg_pec, ED_PIXENGCFG_STATIC, SYNC_MODE, SINGLE);
+	regmap_write_bits(ed->reg_pec, ED_PIXENGCFG_STATIC, DIV_MASK,
+			  DIV(DIV_RESET));
+	regmap_write_bits(ed->reg_pec, ED_PIXENGCFG_DYNAMIC, CLKEN_MASK,
+			  CLKEN(1) | 0);
+	regmap_write_bits(ed->reg_cfg, ED_STATICCONTROL, SHDEN, SHDEN);
+	regmap_write_bits(ed->reg_cfg, ED_STATICCONTROL, PERFCOUNTMODE, 0);
+	regmap_write_bits(ed->reg_cfg, ED_STATICCONTROL, KICK_MODE, EXTERNAL);
+	regmap_write_bits(ed->reg_cfg, ED_CONTROL, GAMMAAPPLYENABLE, 0);
 }
+EXPORT_SYMBOL_GPL(dc_ed_init);
 
 static int dc_ed_bind(struct device *dev, struct device *master, void *data)
 {
 	struct platform_device *pdev = to_platform_device(dev);
+	const struct dc_lib_ed_match_data *match_data;
 	struct dc_drm_device *dc_drm = data;
 	struct resource *res_pec;
 	void __iomem *base_pec;
 	void __iomem *base_cfg;
 	struct dc_ed *ed;
 	int id;
+
+	match_data = of_match_node(dev->driver->of_match_table,
+				   dev->of_node)->data;
+	if (!match_data)
+		return -EINVAL;
 
 	ed = devm_kzalloc(dev, sizeof(*ed), GFP_KERNEL);
 	if (!ed)
@@ -246,12 +268,20 @@ static int dc_ed_bind(struct device *dev, struct device *master, void *data)
 		return PTR_ERR(ed->reg_cfg);
 
 	ed->irq_shdload = platform_get_irq_byname(pdev, "shdload");
-	if (ed->irq_shdload < 0)
+	if (ed->irq_shdload == -EPROBE_DEFER)
 		return ed->irq_shdload;
+	if (ed->irq_shdload < 0) {
+		if (of_device_is_compatible(dev->of_node, "fsl,imx95-dc-extdst"))
+			ed->irq_shdload = 0;
+		else
+			return ed->irq_shdload;
+	}
 
 	ed->dev = dev;
+	ed->match_data = match_data;
 
-	id = dc_subdev_get_id(dc_ed_info, ARRAY_SIZE(dc_ed_info), res_pec);
+	id = dc_subdev_get_id(match_data->subdev_info,
+			      match_data->subdev_info_cnt, res_pec);
 	if (id < 0) {
 		dev_err(dev, "failed to get instance number: %d\n", id);
 		return id;
@@ -297,7 +327,10 @@ static void dc_ed_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id dc_ed_dt_ids[] = {
-	{ .compatible = "fsl,imx8qxp-dc-extdst" },
+	{ .compatible = "fsl,imx8qxp-dc-extdst",
+	  .data = &dc_ed_imx8qxp_data },
+	{ .compatible = "fsl,imx95-dc-extdst",
+	  .data = &dc_ed_imx95_data },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, dc_ed_dt_ids);

@@ -114,10 +114,13 @@ void dc_de_post_bind(struct dc_drm_device *dc_drm)
 
 	for (i = 0; i < DC_DISPLAYS; i++) {
 		de = dc_drm->de[i];
+		if (!de)
+			continue;
 		de->fg = dc_drm->fg[i];
 		de->tc = dc_drm->tc[i];
 	}
 }
+EXPORT_SYMBOL_GPL(dc_de_post_bind);
 
 static const struct component_ops dc_de_ops = {
 	.bind = dc_de_bind,

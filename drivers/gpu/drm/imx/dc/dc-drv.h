@@ -6,6 +6,7 @@
 #ifndef __DC_DRV_H__
 #define __DC_DRV_H__
 
+#include <linux/clk.h>
 #include <linux/container_of.h>
 #include <linux/ioport.h>
 #include <linux/platform_device.h>
@@ -17,6 +18,27 @@
 #include "dc-de.h"
 #include "dc-kms.h"
 #include "dc-pe.h"
+
+/**
+ * enum dc_soc_type - SoC variant
+ */
+enum dc_soc_type {
+	DC_SOC_IMX8QXP,
+	DC_SOC_IMX95,
+};
+
+/**
+ * struct dc_imx95 - i.MX95-specific sub-block pointers
+ *
+ * These are ioremap'd by the individual component drivers and stored here
+ * so the KMS layer (dc-crtc, dc-plane) can program them directly.
+ * Opaque void pointers are cast to the real type via dc-imx95-db.h etc.
+ */
+struct dc_imx95 {
+	void *db[2];
+	void *di[2];
+	void __iomem *dm_regs;
+};
 
 /**
  * struct dc_drm_device - DC specific drm_device
@@ -52,6 +74,18 @@ struct dc_drm_device {
 	struct dc_tc *tc[DC_DISPLAYS];
 	/** @pe_clk_axi_disabled: disablement flag at boot */
 	bool pe_clk_axi_disabled;
+	/** @clk_pix: pixel clock (i.MX95 only) */
+	struct clk *clk_pix;
+	/** @clk_ldb: LDB clock (i.MX95 only) */
+	struct clk *clk_ldb;
+	/** @clk_ldb_vco: LDB VCO clock (i.MX95 only) */
+	struct clk *clk_ldb_vco;
+	/** @dispmix_csr: display-mix blk-ctrl syscon regmap (i.MX95 only) */
+	struct regmap *dispmix_csr;
+	/** @soc: SoC variant */
+	enum dc_soc_type soc;
+	/** @imx95: i.MX95-specific sub-block pointers (NULL on 8QXP) */
+	struct dc_imx95 *imx95;
 };
 
 struct dc_subdev_info {
@@ -70,20 +104,8 @@ int dc_crtc_post_init(struct dc_drm_device *dc_drm, int crtc_index);
 int dc_kms_init(struct dc_drm_device *dc_drm);
 void dc_kms_uninit(struct dc_drm_device *dc_drm);
 
-int dc_plane_init(struct dc_drm_device *dc_drm, struct dc_plane *dc_plane);
-
-extern struct platform_driver dc_cf_driver;
-extern struct platform_driver dc_de_driver;
-extern struct platform_driver dc_dprc_driver;
-extern struct platform_driver dc_ed_driver;
-extern struct platform_driver dc_fg_driver;
-extern struct platform_driver dc_fl_driver;
-extern struct platform_driver dc_fw_driver;
-extern struct platform_driver dc_ic_driver;
-extern struct platform_driver dc_lb_driver;
-extern struct platform_driver dc_pe_driver;
-extern struct platform_driver dc_prg_driver;
-extern struct platform_driver dc_tc_driver;
+int dc_plane_init(struct dc_drm_device *dc_drm, struct dc_plane *dc_plane,
+		  unsigned int possible_crtcs);
 
 static inline int dc_subdev_get_id(const struct dc_subdev_info *info,
 				   int info_cnt, struct resource *res)
@@ -103,5 +125,22 @@ static inline int dc_subdev_get_id(const struct dc_subdev_info *info,
 void dc_crtc_disable_at_boot(struct drm_crtc *crtc);
 void dc_de_post_bind(struct dc_drm_device *dc_drm);
 void dc_pe_post_bind(struct dc_drm_device *dc_drm);
+
+extern struct platform_driver dc_cf_driver;
+extern struct platform_driver dc_de_driver;
+extern struct platform_driver dc_dprc_driver;
+extern struct platform_driver dc_ed_driver;
+extern struct platform_driver dc_fg_driver;
+extern struct platform_driver dc_fl_driver;
+extern struct platform_driver dc_fw_driver;
+extern struct platform_driver dc_ic_driver;
+extern struct platform_driver dc_lb_driver;
+extern struct platform_driver dc_pe_driver;
+extern struct platform_driver dc_prg_driver;
+extern struct platform_driver dc_tc_driver;
+
+/* i.MX95-only platform drivers */
+extern struct platform_driver dc_imx95_db_driver;
+extern struct platform_driver dc_imx95_dither_driver;
 
 #endif /* __DC_DRV_H__ */
