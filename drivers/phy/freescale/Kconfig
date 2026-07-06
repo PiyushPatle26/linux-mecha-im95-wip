@@ -75,3 +75,11 @@ config PHY_FSL_LYNX_28G
 	  found on NXP's Layerscape platforms such as LX2160A.
 	  Used to change the protocol running on SerDes lanes at runtime.
 	  Only useful for a restricted set of Ethernet protocols.
+
+config PHY_FSL_IMX8MP_LVDS
+	tristate "Freescale i.MX8MP/i.MX95 LVDS PHY support"
+	depends on OF && MFD_SYSCON && COMMON_CLK
+	select GENERIC_PHY
+	help
+	  Enable this to add support for the LVDS PHY as found on
+	  Freescale i.MX8MP, i.MX93 and i.MX95 processors.
