@@ -1,0 +1,157 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/display/bridge/nxp,imx95-pixel-interleaver.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: NXP i.MX95 Pixel Interleaver
+
+maintainers:
+  - NXP Semiconductor <imx@lists.linux.dev>
+
+description: |
+  The i.MX95 Pixel Interleaver takes up to two output streams from the
+  Display Controller and interleaves them (split mode) or passes them
+  through (bypass mode) to the Pixel Link crossbar in the Display Master
+  CSR. It is used to support dual-display and high-resolution configurations.
+
+properties:
+  compatible:
+    const: nxp,imx95-pixel-interleaver
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+    description: overflow/error interrupt for all streams
+
+  clocks:
+    maxItems: 1
+    description: bus interface clock
+
+  nxp,blk-ctrl:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      A phandle to the block control syscon (dispmix_csr) which contains
+      the pixel interleaver control register.
+
+  nxp,pixel-interleaving-stream-id:
+    $ref: /schemas/types.yaml#/definitions/uint8
+    enum: [0, 1]
+    description:
+      The display stream index used in pixel interleaving mode. If present,
+      the pixel interleaver operates in STREAMx_SPLIT2 mode instead of bypass.
+      The selected stream is split across both channels.
+
+  "#address-cells":
+    const: 1
+
+  "#size-cells":
+    const: 0
+
+patternProperties:
+  "^channel@[0-1]$":
+    type: object
+    description: Represents a display stream channel.
+
+    properties:
+      "#address-cells":
+        const: 1
+
+      "#size-cells":
+        const: 0
+
+      reg:
+        description: The channel index.
+        enum: [0, 1]
+
+      port@0:
+        $ref: /schemas/graph.yaml#/properties/port
+        description:
+          Input port of the channel, connected to a Display Controller
+          output port (DC port@N).
+
+      port@1:
+        $ref: /schemas/graph.yaml#/properties/port
+        description:
+          Output port of the channel, connected to the pixel link input port.
+
+    required:
+      - "#address-cells"
+      - "#size-cells"
+      - reg
+      - port@0
+      - port@1
+
+    additionalProperties: false
+
+required:
+  - compatible
+  - reg
+  - interrupts
+  - clocks
+  - nxp,blk-ctrl
+  - "#address-cells"
+  - "#size-cells"
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+    #include <dt-bindings/clock/nxp,imx95-clock.h>
+
+    pixel-interleaver@4b0d0000 {
+        compatible = "nxp,imx95-pixel-interleaver";
+        reg = <0x4b0d0000 0x10000>;
+        interrupts = <GIC_SPI 63 IRQ_TYPE_LEVEL_HIGH>;
+        clocks = <&scmi_clk IMX95_CLK_BUSWAKEUP>;
+        nxp,blk-ctrl = <&dispmix_csr>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        channel@0 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <0>;
+
+            port@0 {
+                reg = <0>;
+
+                endpoint {
+                    remote-endpoint = <&dc_port0>;
+                };
+            };
+
+            port@1 {
+                reg = <1>;
+
+                endpoint {
+                    remote-endpoint = <&pixel_link_in0>;
+                };
+            };
+        };
+
+        channel@1 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <1>;
+
+            port@0 {
+                reg = <0>;
+
+                endpoint {
+                    remote-endpoint = <&dc_port1>;
+                };
+            };
+
+            port@1 {
+                reg = <1>;
+
+                endpoint {
+                    remote-endpoint = <&pixel_link_in1>;
+                };
+            };
+        };
+    };

@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/phy/fsl,imx8mp-lvds-phy.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Freescale i.MX8MP/i.MX93/i.MX95 LVDS PHY
+
+maintainers:
+  - NXP Semiconductor <imx@lists.linux.dev>
+
+description: |
+  The LVDS PHY converts parallel CMOS data into LVDS data streams.
+  On i.MX8MP and i.MX93, a single controller manages two PHY channels.
+  On i.MX95, each PHY channel is a separate controller instance.
+
+  The PHY registers are accessed via a syscon phandle.
+
+properties:
+  compatible:
+    enum:
+      - fsl,imx8mp-lvds-phy
+      - fsl,imx93-lvds-phy
+      - fsl,imx95-lvds0-phy
+      - fsl,imx95-lvds1-phy
+
+  reg:
+    maxItems: 1
+    description:
+      Offset of the PHY control register within the parent syscon.
+
+  gpr:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      Phandle to the syscon (LVDS CSR) containing the PHY registers.
+
+  "#phy-cells":
+    const: 0
+
+  clocks:
+    maxItems: 1
+
+  clock-names:
+    const: apb
+
+required:
+  - compatible
+  - reg
+  - gpr
+  - "#phy-cells"
+  - clocks
+  - clock-names
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/clock/nxp,imx95-clock.h>
+
+    lvds_csr: syscon@4b0c0000 {
+        compatible = "nxp,imx95-lvds-csr", "syscon", "simple-mfd";
+        reg = <0x4b0c0000 0x10000>;
+
+        lvds0-phy@8 {
+            compatible = "fsl,imx95-lvds0-phy";
+            reg = <0x8>;
+            gpr = <&lvds_csr>;
+            #phy-cells = <0>;
+            clocks = <&scmi_clk IMX95_CLK_BUSWAKEUP>;
+            clock-names = "apb";
+        };
+
+        lvds1-phy@c {
+            compatible = "fsl,imx95-lvds1-phy";
+            reg = <0xc>;
+            gpr = <&lvds_csr>;
+            #phy-cells = <0>;
+            clocks = <&scmi_clk IMX95_CLK_BUSWAKEUP>;
+            clock-names = "apb";
+        };
+    };
