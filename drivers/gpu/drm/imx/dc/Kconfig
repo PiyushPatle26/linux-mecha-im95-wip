@@ -10,18 +10,18 @@ config DRM_IMX_DC_LIB
 	select REGMAP_MMIO
 
 config DRM_IMX8QXP_DC
-	tristate "NXP i.MX8QXP DC8000 Display Controller"
+	tristate "NXP i.MX8QXP Display Controller"
 	depends on DRM && COMMON_CLK && OF && (ARCH_MXC || COMPILE_TEST)
 	depends on IMX_SCU
 	select DRM_IMX_DC_LIB
 	help
-	  DRM driver for the DC8000 display controller found in NXP i.MX8QXP.
+	  DRM driver for the display controller found in NXP i.MX8QXP.
 	  Enables LVDS and DisplayPort output via the DC component framework.
 
 config DRM_IMX95_DC
-	tristate "NXP i.MX95 DC8000 Display Controller"
+	tristate "NXP i.MX95 Display Controller"
 	depends on DRM && COMMON_CLK && OF && (ARCH_MXC || COMPILE_TEST)
 	select DRM_IMX_DC_LIB
 	help
-	  DRM driver for the DC8000 display controller found in NXP i.MX95.
+	  DRM driver for the display controller found in NXP i.MX95.
 	  Enables LVDS output via pixel-interleaver -> LDB -> LVDS PHY -> IT6263 HDMI.

@@ -74,12 +74,6 @@ struct dc_drm_device {
 	struct dc_tc *tc[DC_DISPLAYS];
 	/** @pe_clk_axi_disabled: disablement flag at boot */
 	bool pe_clk_axi_disabled;
-	/** @clk_pix: pixel clock (i.MX95 only) */
-	struct clk *clk_pix;
-	/** @clk_ldb: LDB clock (i.MX95 only) */
-	struct clk *clk_ldb;
-	/** @clk_ldb_vco: LDB VCO clock (i.MX95 only) */
-	struct clk *clk_ldb_vco;
 	/** @dispmix_csr: display-mix blk-ctrl syscon regmap (i.MX95 only) */
 	struct regmap *dispmix_csr;
 	/** @soc: SoC variant */
@@ -125,6 +119,7 @@ static inline int dc_subdev_get_id(const struct dc_subdev_info *info,
 void dc_crtc_disable_at_boot(struct drm_crtc *crtc);
 void dc_de_post_bind(struct dc_drm_device *dc_drm);
 void dc_pe_post_bind(struct dc_drm_device *dc_drm);
+void dc_crtc_reinit_hw(struct dc_drm_device *dc_drm);
 
 extern struct platform_driver dc_cf_driver;
 extern struct platform_driver dc_de_driver;

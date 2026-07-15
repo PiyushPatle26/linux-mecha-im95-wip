@@ -2,8 +2,8 @@
 /*
  * Copyright 2024 NXP
  *
- * KMS init helpers shared between the i.MX8QXP and i.MX95 DC8000 DRM
- * drivers.  dc_kms_init()/dc_kms_uninit() themselves are per-SoC since they
+ * KMS init helpers shared between the i.MX8QXP and i.MX95 Display Controller
+ * DRM drivers.  dc_kms_init()/dc_kms_uninit() themselves are per-SoC since they
  * call the per-SoC dc_crtc_init().
  */
 

@@ -2506,12 +2506,8 @@
 			interrupt-parent = <&gic>;
 			clocks = <&scmi_clk IMX95_CLK_DISPAPB>,
 				 <&scmi_clk IMX95_CLK_DISPAXI>,
-				 <&scmi_clk IMX95_CLK_DISPOCRAM>,
-				 <&scmi_clk IMX95_CLK_DISP1PIX>,
-				 <&ldb_pll_pixel>,
-				 <&scmi_clk IMX95_CLK_LDBPLL_VCO>;
-			clock-names = "cfg", "axi", "ocram",
-				      "pix", "ldb", "ldb_vco";
+				 <&scmi_clk IMX95_CLK_DISPOCRAM>;
+			clock-names = "cfg", "axi", "ocram";
 			nxp,blk-ctrl = <&dispmix_csr>;
 			power-domains = <&scmi_devpd IMX95_PD_DISPLAY>;
 			#address-cells = <2>;
@@ -2522,7 +2518,10 @@
 			fg0: fg@4b6b0000 {
 				compatible = "fsl,imx95-dc-framegen";
 				reg = <0x0 0x4b6b0000 0x0 0x1000>;
-				clocks = <&scmi_clk IMX95_CLK_DISP1PIX>;
+				clocks = <&scmi_clk IMX95_CLK_DISP1PIX>,
+					 <&ldb_pll_pixel>,
+					 <&scmi_clk IMX95_CLK_LDBPLL_VCO>;
+				clock-names = "pix", "ldb", "ldb_vco";
 				status = "disabled";
 			};
 
@@ -2582,7 +2581,10 @@
 			fg1: fg@4b730000 {
 				compatible = "fsl,imx95-dc-framegen";
 				reg = <0x0 0x4b730000 0x0 0x1000>;
-				clocks = <&scmi_clk IMX95_CLK_DISP2PIX>;
+				clocks = <&scmi_clk IMX95_CLK_DISP2PIX>,
+					 <&ldb_pll_pixel>,
+					 <&scmi_clk IMX95_CLK_LDBPLL_VCO>;
+				clock-names = "pix", "ldb", "ldb_vco";
 				status = "disabled";
 			};
 

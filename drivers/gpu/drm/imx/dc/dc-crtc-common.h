@@ -2,16 +2,22 @@
 /*
  * Copyright 2024 NXP
  *
- * CRTC helpers shared between the i.MX8QXP and i.MX95 DC8000 DRM drivers.
- * Everything here is plain register/IRQ plumbing with no SoC identity check
- * and no struct drm_driver coupling; each SoC driver keeps its own
- * drm_crtc_funcs/drm_crtc_helper_funcs tables and calls into these.
+ * CRTC helpers shared between the i.MX8QXP and i.MX95 Display Controller
+ * DRM drivers: the vblank hrtimer, IRQ handlers, dc_crtc_request_irqs()
+ * and dc_crtc_queue_state_event().  No SoC identity checks and no
+ * struct drm_driver coupling; each SoC driver keeps its own
+ * drm_crtc_funcs/drm_crtc_helper_funcs and calls into these.
+ *
+ * mode_valid/atomic_check/atomic_begin/atomic_flush are not here on
+ * purpose: the hardware sequences differ per SoC, so each SoC driver
+ * implements its own instead of sharing one behind conditionals.
  */
 
 #ifndef __DC_CRTC_COMMON_H__
 #define __DC_CRTC_COMMON_H__
 
 #include <linux/container_of.h>
+#include <linux/interrupt.h>
 
 #include <drm/drm_print.h>
 
@@ -75,12 +81,6 @@ void dc_crtc_setup_vblank_hrtimer(struct dc_crtc *dc_crtc);
 int dc_crtc_enable_vblank(struct drm_crtc *crtc);
 void dc_crtc_disable_vblank(struct drm_crtc *crtc);
 
-enum drm_mode_status
-dc_crtc_mode_valid(struct drm_crtc *crtc, const struct drm_display_mode *mode);
-int dc_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state);
-void dc_crtc_atomic_begin(struct drm_crtc *crtc, struct drm_atomic_commit *state);
-void dc_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_commit *state);
-
 /*
  * may_defer: cache the event and send it from the frame-complete IRQ handler
  * instead of sending it immediately.  Only meaningful when
@@ -91,5 +91,11 @@ void dc_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_commit *state
 void dc_crtc_queue_state_event(struct drm_crtc_state *crtc_state, bool may_defer);
 
 int dc_crtc_request_irqs(struct drm_device *drm, struct dc_crtc *dc_crtc);
+
+/*
+ * Exported so i.MX95 can devm_free_irq()/devm_request_irq() this specific
+ * IRQ around each modeset - see dc-crtc-imx95.c.
+ */
+irqreturn_t dc_crtc_irq_handler_dec_framecomplete(int irq, void *dev_id);
 
 #endif /* __DC_CRTC_COMMON_H__ */

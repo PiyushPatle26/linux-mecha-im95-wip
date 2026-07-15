@@ -272,6 +272,14 @@ static int dc_ic_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	/*
+	 * Held across the one-time hardware init and chained-handler setup
+	 * below, then released at the end of probe.  From then on,
+	 * irq_domain_set_pm_device() (below) ties this device's runtime PM
+	 * to actual request_irq()/free_irq() calls on IRQs in its domain -
+	 * i.MX95 CRTCs devm_free_irq()/devm_request_irq() their DisEngCfg
+	 * framecomplete IRQ around each modeset for exactly this reason.
+	 */
 	ret = pm_runtime_resume_and_get(dev);
 	if (ret < 0) {
 		dev_err(dev, "failed to resume: %d\n", ret);
@@ -356,6 +364,8 @@ static int dc_ic_probe(struct platform_device *pdev)
 						 &data->entry[i]);
 	}
 
+	pm_runtime_put(dev);
+
 	return 0;
 }
 
@@ -374,7 +384,6 @@ static void dc_ic_remove(struct platform_device *pdev)
 	}
 
 	irq_domain_remove(data->domain);
-	pm_runtime_put_sync(&pdev->dev);
 }
 
 /* ------------------------------------------------------------------ */
@@ -392,8 +401,39 @@ static int dc_ic_runtime_suspend(struct device *dev)
 static int dc_ic_runtime_resume(struct device *dev)
 {
 	struct dc_ic_data *data = dev_get_drvdata(dev);
+	const struct dc_ic_variant *variant = data->variant;
+	struct irq_chip_generic *gc;
+	int ret, i;
 
-	return clk_prepare_enable(data->clk_axi);
+	ret = clk_prepare_enable(data->clk_axi);
+	if (ret)
+		return ret;
+
+	/*
+	 * A real power-domain cycle resets the enable/mask registers to
+	 * POR, but the generic irq chips' software mask_cache (maintained
+	 * by irq_gc_mask_set_bit/irq_gc_mask_clr_bit) still reflects
+	 * whichever hwirqs were unmasked before the cycle - restore the
+	 * hardware to match, or an IRQ left unmasked in software would
+	 * silently stop firing until something happens to touch its mask
+	 * again.  No-op on the very first resume, before probe has created
+	 * the irq_domain and allocated the generic chips.
+	 */
+	if (!data->domain)
+		return 0;
+
+	for (i = 0; i < variant->banks; i++) {
+		gc = irq_get_domain_generic_chip(data->domain, i * 32);
+		if (!gc)
+			continue;
+
+		regmap_write(data->regs, variant->regs[i].enable, gc->mask_cache);
+		if (variant->user_regs)
+			regmap_write(data->regs, variant->user_regs[i].enable,
+				     gc->mask_cache);
+	}
+
+	return 0;
 }
 
 static const struct dev_pm_ops dc_ic_pm_ops = {

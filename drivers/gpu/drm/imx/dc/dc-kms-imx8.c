@@ -2,7 +2,7 @@
 /*
  * Copyright 2024 NXP
  *
- * i.MX8QXP KMS init.
+ * i.MX8 KMS init.
  */
 
 #include <drm/drm_device.h>

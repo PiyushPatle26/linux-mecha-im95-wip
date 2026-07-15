@@ -2,8 +2,8 @@
 /*
  * Copyright 2024 NXP
  *
- * Registers the hardware sub-block component drivers shared by both DC8000
- * SoC drivers (imx8qxp-dc-drm, imx95-dc-drm).
+ * Registers the hardware sub-block component drivers shared by both Display
+ * Controller SoC drivers (imx8-dc-drm, imx95-dc-drm).
  */
 
 #include <linux/array_size.h>
@@ -43,6 +43,6 @@ static void __exit dc_lib_exit(void)
 }
 module_exit(dc_lib_exit);
 
-MODULE_DESCRIPTION("i.MX8 DC8000 Display Controller Helper Library");
+MODULE_DESCRIPTION("i.MX Display Controller Helper Library");
 MODULE_AUTHOR("Liu Ying <victor.liu@nxp.com>");
 MODULE_LICENSE("GPL");

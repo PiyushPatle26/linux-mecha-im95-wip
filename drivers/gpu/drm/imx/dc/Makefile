@@ -12,10 +12,13 @@ imx-dc-lib-objs := dc-cf.o dc-ed.o dc-fg.o dc-lb.o dc-fu.o dc-fw.o \
 		   dc-plane.o dc-kms.o dc-crtc-common.o dc-subblocks.o
 obj-$(CONFIG_DRM_IMX_DC_LIB) += imx-dc-lib.o
 
-# i.MX8QXP DC8000 DRM driver: own struct drm_driver, probe/bind, CRTC/KMS.
-imx8qxp-dc-drm-objs := dc-drv-imx8qxp.o dc-crtc-imx8qxp.o dc-kms-imx8qxp.o
-obj-$(CONFIG_DRM_IMX8QXP_DC) += imx8qxp-dc-drm.o
+# i.MX8 Display Controller DRM driver: own struct drm_driver, probe/bind,
+# CRTC/KMS.  i.MX8QXP today; file names are kept SoC-family-generic to match
+# drm_driver.name ("imx8-dc"), not QXP-specific.
+imx8-dc-drm-objs := dc-drv-imx8.o dc-crtc-imx8.o dc-kms-imx8.o
+obj-$(CONFIG_DRM_IMX8QXP_DC) += imx8-dc-drm.o
 
-# i.MX95 DC8000 DRM driver: own struct drm_driver, probe/bind, CRTC/KMS.
+# i.MX95 Display Controller DRM driver: own struct drm_driver, probe/bind,
+# CRTC/KMS.
 imx95-dc-drm-objs := dc-drv-imx95.o dc-crtc-imx95.o dc-kms-imx95.o
 obj-$(CONFIG_DRM_IMX95_DC) += imx95-dc-drm.o

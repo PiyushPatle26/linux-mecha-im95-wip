@@ -2,9 +2,10 @@
 /*
  * Copyright 2024 NXP
  *
- * i.MX95 DC8000 DRM platform driver.
+ * i.MX95 Display Controller DRM platform driver.
  */
 
+#include <linux/bits.h>
 #include <linux/clk.h>
 #include <linux/component.h>
 #include <linux/device.h>
@@ -47,15 +48,31 @@
 #define  DISPMIX_ARQOS_MASK		0x7
 #define  DISPMIX_ARQOS(n)		((n) & 0x7)
 
+/*
+ * DisplayEngine_Plane_Association (DISPLAY_CSR offset 0x20): routes each
+ * fetch unit's panic signal to one of the two Display Engine FIFOs, which
+ * is what QOS_SETTING above actually raises priority for.  FetchLayer0/1
+ * drive pipeline 0/1; left at the POR value of 0 both associate with
+ * Display Engine 0.  Resets to 0 on every power-domain cycle like
+ * QOS_SETTING, so it is reprogrammed in dc_runtime_resume().
+ */
+#define DISPMIX_PLANE_ASSOCIATION	0x20
+#define  DISPMIX_FRACPLANE0_DE1		BIT(0)
+#define  DISPMIX_FRACPLANE1_DE1		BIT(2)
+
 struct dc_priv {
 	struct drm_device *drm;
 	struct clk *clk_cfg;
 	struct clk *clk_axi;
 	struct clk *clk_ocram;
-	struct clk *clk_pix;
-	struct clk *clk_ldb;
-	struct clk *clk_ldb_vco;
 	struct regmap *dispmix_csr;
+	/*
+	 * Set once component binding completes.  dc_runtime_resume() uses
+	 * this to reinit sub-block hardware state after a real (non-initial)
+	 * power-domain cycle; NULL during the very first resume at probe,
+	 * before any CRTC exists to reinit.
+	 */
+	struct dc_drm_device *dc_drm;
 };
 
 DEFINE_DRM_GEM_DMA_FOPS(dc_drm_driver_fops);
@@ -66,7 +83,7 @@ static struct drm_driver dc_drm_driver = {
 	DRM_FBDEV_DMA_DRIVER_OPS,
 	.fops = &dc_drm_driver_fops,
 	.name = "imx95-dc",
-	.desc = "i.MX95 DC8000 DRM graphics",
+	.desc = "i.MX95 Display Controller DRM graphics",
 	.major = 1,
 	.minor = 0,
 	.patchlevel = 0,
@@ -142,10 +159,8 @@ static int dc_drm_bind(struct device *dev)
 	dc_drm->imx95 = devm_kzalloc(dev, sizeof(*dc_drm->imx95), GFP_KERNEL);
 	if (!dc_drm->imx95)
 		return -ENOMEM;
-	dc_drm->clk_pix = priv->clk_pix;
-	dc_drm->clk_ldb = priv->clk_ldb;
-	dc_drm->clk_ldb_vco = priv->clk_ldb_vco;
 	dc_drm->dispmix_csr = priv->dispmix_csr;
+	priv->dc_drm = dc_drm;
 
 	dc_res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (dc_res) {
@@ -232,20 +247,12 @@ static int dc_probe(struct platform_device *pdev)
 		return dev_err_probe(&pdev->dev, PTR_ERR(priv->clk_ocram),
 				     "failed to get ocram clock\n");
 
-	priv->clk_pix = devm_clk_get(&pdev->dev, "pix");
-	if (IS_ERR(priv->clk_pix))
-		return dev_err_probe(&pdev->dev, PTR_ERR(priv->clk_pix),
-				     "failed to get pix clock\n");
-
-	priv->clk_ldb = devm_clk_get(&pdev->dev, "ldb");
-	if (IS_ERR(priv->clk_ldb))
-		return dev_err_probe(&pdev->dev, PTR_ERR(priv->clk_ldb),
-				     "failed to get ldb clock\n");
-
-	priv->clk_ldb_vco = devm_clk_get(&pdev->dev, "ldb_vco");
-	if (IS_ERR(priv->clk_ldb_vco))
-		return dev_err_probe(&pdev->dev, PTR_ERR(priv->clk_ldb_vco),
-				     "failed to get ldb_vco clock\n");
+	/*
+	 * The DC IP itself only needs its register-bus clocks (cfg/axi/ocram).
+	 * The FrameGen pixel clock ("pix") and the LDB PLL tree feeding the
+	 * LVDS output path ("ldb"/"ldb_vco") are owned per-instance by the
+	 * FrameGen sub-block driver (dc-fg.c), not here.
+	 */
 
 	/*
 	 * Look up the display-mix blk-ctrl syscon for QoS programming
@@ -273,27 +280,37 @@ static int dc_probe(struct platform_device *pdev)
 		return ret;
 
 	/*
-	 * Take a permanent PM reference so that genpd keeps IMX95_PD_DISPLAY
-	 * powered on after sync_state() fires.  Without this, genpd sees
-	 * active_count=0 after the power domain's sync_state callback runs and
-	 * immediately powers off the display domain, making all sub-block
-	 * register accesses fault.  The reference is released in dc_remove.
+	 * Hold a PM reference across component bind: without it, genpd sees
+	 * active_count=0 after the power domain's sync_state() callback runs
+	 * and powers the display domain off before the sub-blocks' one-time
+	 * hardware init (component bind, dc_crtc_disable_at_boot()) has run,
+	 * making their register accesses fault.  Released below once bind
+	 * completes; after that, each CRTC takes/releases its own reference
+	 * per modeset (dc_crtc_mode_set_nofb()/atomic_disable()), so the
+	 * domain can actually power-cycle between modesets instead of
+	 * staying pinned for the driver's whole lifetime.
 	 */
 	ret = pm_runtime_resume_and_get(&pdev->dev);
 	if (ret < 0)
 		return dev_err_probe(&pdev->dev, ret, "failed to resume DC\n");
 
 	ret = devm_of_platform_populate(&pdev->dev);
-	if (ret)
+	if (ret) {
+		pm_runtime_put(&pdev->dev);
 		return dev_err_probe(&pdev->dev, ret,
 				     "failed to populate children\n");
+	}
 
 	dc_add_components(&pdev->dev, &match);
 
 	ret = component_master_add_with_match(&pdev->dev, &dc_drm_ops, match);
-	if (ret)
+	if (ret) {
+		pm_runtime_put(&pdev->dev);
 		return dev_err_probe(&pdev->dev, ret,
 				     "failed to add component master\n");
+	}
+
+	pm_runtime_put(&pdev->dev);
 
 	return 0;
 }
@@ -301,7 +318,6 @@ static int dc_probe(struct platform_device *pdev)
 static void dc_remove(struct platform_device *pdev)
 {
 	component_master_del(&pdev->dev, &dc_drm_ops);
-	pm_runtime_put_noidle(&pdev->dev);
 }
 
 static int dc_runtime_suspend(struct device *dev)
@@ -353,7 +369,36 @@ static int dc_runtime_resume(struct device *dev)
 			dev_err(dev, "failed to set display QoS: %d\n", ret);
 			goto err_qos;
 		}
+
+		/*
+		 * Associate FetchLayer1 (the second FetchLayer, driving
+		 * pipeline 1) with Display Engine 1's panic FIFO; FetchLayer0
+		 * stays associated with Display Engine 0, which is also the
+		 * POR value.  See DISPMIX_PLANE_ASSOCIATION above.
+		 */
+		ret = regmap_update_bits(priv->dispmix_csr,
+					 DISPMIX_PLANE_ASSOCIATION,
+					 DISPMIX_FRACPLANE0_DE1 |
+					 DISPMIX_FRACPLANE1_DE1,
+					 DISPMIX_FRACPLANE1_DE1);
+		if (ret) {
+			dev_err(dev,
+				"failed to set display engine plane association: %d\n",
+				ret);
+			goto err_qos;
+		}
 	}
+
+	/*
+	 * A real power-domain cycle resets every sub-block's registers, not
+	 * just the ones above.  priv->dc_drm is NULL on the very first
+	 * resume (during probe, before any CRTC exists); on later resumes
+	 * reinit each CRTC's content-path blocks, mirroring the downstream
+	 * driver's dpu95_submodules_hw_init() called from its own
+	 * runtime_resume.
+	 */
+	if (priv->dc_drm)
+		dc_crtc_reinit_hw(priv->dc_drm);
 
 	return 0;
 
@@ -410,6 +455,6 @@ static struct platform_driver dc_imx95_driver = {
 };
 module_platform_driver(dc_imx95_driver);
 
-MODULE_DESCRIPTION("i.MX95 DC8000 DRM Driver");
+MODULE_DESCRIPTION("i.MX95 Display Controller DRM Driver");
 MODULE_AUTHOR("Liu Ying <victor.liu@nxp.com>");
 MODULE_LICENSE("GPL");

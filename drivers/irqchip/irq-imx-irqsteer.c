@@ -265,6 +265,17 @@ static int imx_irqsteer_probe(struct platform_device *pdev)
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
 
+	/*
+	 * Clock was enabled at probe time for register access.  Transfer
+	 * ownership to runtime PM so the device can suspend when no IRQ
+	 * consumers are active.
+	 */
+	pm_runtime_get_noresume(&pdev->dev);
+	pm_runtime_set_autosuspend_delay(&pdev->dev, 100);
+	pm_runtime_use_autosuspend(&pdev->dev);
+	pm_runtime_mark_last_busy(&pdev->dev);
+	pm_runtime_put_autosuspend(&pdev->dev);
+
 	return 0;
 out:
 	clk_disable_unprepare(data->ipg_clk);
@@ -275,6 +286,13 @@ static void imx_irqsteer_remove(struct platform_device *pdev)
 {
 	struct irqsteer_data *irqsteer_data = platform_get_drvdata(pdev);
 	int i;
+
+	/*
+	 * Ensure the device is active before tearing down — RPM may have
+	 * suspended it and disabled the clock.
+	 */
+	pm_runtime_get_sync(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
 
 	for (i = 0; i < irqsteer_data->irq_count; i++) {
 		if (!irqsteer_data->irq[i])

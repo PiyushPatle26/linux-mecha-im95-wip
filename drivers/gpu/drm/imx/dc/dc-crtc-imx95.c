@@ -16,18 +16,23 @@
  * LVDS PLL, which the LDB bridge keeps enabled.  i.MX8QXP avoids this by
  * power-cycling the display and pixel-engine domains on every modeset, which
  * resets FrameGen through the runtime PM resume path.  i.MX95 can't do the
- * same: IMX95_PD_DISPLAY is a single domain pinned on by other consumers
- * (dispmix_csr, the interrupt steer/controller), and there's no reset
- * controller or SCMI reset for the display slice.
- *
- * Fixing this means making IMX95_PD_DISPLAY cycle-able again: drop the
- * driver's permanent PM reference, add a runtime_resume that reinitializes
- * the blocks, and stop the other consumers from pinning the domain.
+ * same: even with dc-drv-imx95.c's and dc-ic.c's own permanent PM references
+ * dropped (both now cycle correctly per-modeset), the display power domain
+ * still never reaches a real power-off, because irqsteer and the LVDS PHY
+ * stay permanently active regardless of idle time or dc/'s own bind state
+ * (verified on FRDM hardware: pm_genpd_summary never showed anything but
+ * "on" for the domain, even after unbinding dc entirely and after 15s
+ * genuinely idle).  Fixing this needs either irqsteer's runtime-PM policy
+ * to change (shared infrastructure, not safe to touch for this series alone)
+ * or a firmware/SCMI-level reset scoped to the display slice - neither is
+ * dc/ driver work.
  */
 
 #include <linux/clk.h>
 #include <linux/completion.h>
 #include <linux/container_of.h>
+#include <linux/interrupt.h>
+#include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 
 #include <drm/drm_atomic.h>
@@ -60,6 +65,38 @@
 #define  DC_IMX95_PIX_CLK_SEL_DSI_PLL(id)	(0x1 << (2 * (id)))
 #define  DC_IMX95_PIX_CLK_SEL_LVDS_PLL(id)	(0x2 << (2 * (id)))
 
+static enum drm_mode_status
+dc_crtc_mode_valid(struct drm_crtc *crtc, const struct drm_display_mode *mode)
+{
+	struct dc_crtc *dc_crtc = to_dc_crtc(crtc);
+	enum drm_mode_status status;
+
+	status = dc_fg_check_clock(dc_crtc->fg, mode->clock);
+	if (status != MODE_OK)
+		return status;
+
+	if (mode->crtc_clock > DC_FRAMEGEN_MAX_CLOCK_KHZ)
+		return MODE_CLOCK_HIGH;
+
+	return MODE_OK;
+}
+
+static int
+dc_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
+{
+	struct drm_crtc_state *new_crtc_state =
+				drm_atomic_get_new_crtc_state(state, crtc);
+	struct drm_display_mode *adj = &new_crtc_state->adjusted_mode;
+	struct dc_crtc *dc_crtc = to_dc_crtc(crtc);
+	enum drm_mode_status status;
+
+	status = dc_fg_check_clock(dc_crtc->fg, adj->clock);
+	if (status != MODE_OK)
+		return -EINVAL;
+
+	return 0;
+}
+
 /*
  * i.MX95 CRTC mode set.
  *
@@ -81,20 +118,56 @@ static void dc_crtc_mode_set_nofb(struct drm_crtc *crtc)
 
 	dc_crtc_dbg(crtc, "i.MX95 mode " DRM_MODE_FMT "\n", DRM_MODE_ARG(adj));
 
+	/*
+	 * Take the DC device's runtime-PM reference here, mirroring the
+	 * downstream dpu95 driver's dpu95_crtc_mode_set_nofb().  Balanced by
+	 * the put() in dc_crtc_atomic_disable().  If this is the first get()
+	 * since the matching put() on the previous modeset, it triggers a
+	 * real power-domain resume and dc_runtime_resume() reinits the
+	 * content-path blocks below via dc_crtc_reinit_hw().  In practice the
+	 * domain never actually reaches power-off (see the file header), so
+	 * this only matters for the very first modeset today; it is kept
+	 * because it is the structurally correct per-modeset RPM pattern and
+	 * costs nothing.
+	 */
+	if (pm_runtime_resume_and_get(crtc->dev->dev))
+		dc_crtc_err(crtc, "failed to resume DC for mode set\n");
+
+	/*
+	 * Re-request the framecomplete IRQ if atomic_disable() freed it.
+	 * devm_request_irq() triggers irq_domain_set_pm_device()'s automatic
+	 * resume of the interrupt controller (dc-ic.c) - the other half of
+	 * letting dc-ic's own runtime-PM reference cycle correctly between
+	 * modesets (dc-ic.c itself now cycles correctly; the shared display
+	 * power domain still doesn't reach power-off due to irqsteer/PHY).
+	 */
+	if (dc_crtc->irq_dec_framecomplete && !dc_crtc->framecomplete_irq_requested) {
+		int ret = devm_request_irq(dc_crtc->irq_dec_dev,
+					   dc_crtc->irq_dec_framecomplete,
+					   dc_crtc_irq_handler_dec_framecomplete,
+					   IRQF_NO_AUTOEN,
+					   dev_name(dc_crtc->irq_dec_dev), dc_crtc);
+		if (ret)
+			dc_crtc_err(crtc, "failed to request framecomplete irq: %d\n",
+				    ret);
+		else
+			dc_crtc->framecomplete_irq_requested = true;
+	}
+
 	dc_imx95_dm_disable_pipeline_sync(dc_drm->imx95->dm_regs);
 
 	/*
 	 * The FrameGen pixel clock is not enabled here; it is started just before
 	 * FGENABLE=1 in ->atomic_enable so the FrameGen starts on a clean frame
 	 * rather than free-running through the mode set.  Only the DC register bus
-	 * clock (up from probe) is needed for the register writes below.
+	 * clock (just resumed above) is needed for the register writes below.
 	 *
 	 * The content-path pixel-engine blocks (ConstFrame, ExtDst, LayerBlend,
-	 * FetchUnit) and the DomainBlend routing are hardware-initialised once in
-	 * dc_crtc_pe_hw_init(); the permanent runtime-PM reference keeps the
-	 * display power domain on so that setup persists.  Only the FrameGen,
-	 * ConstFrame contents and ExtDst source are reprogrammed per modeset,
-	 * matching the dpu95 driver.
+	 * FetchUnit) and the DomainBlend routing are hardware-initialised in
+	 * dc_crtc_pe_hw_init() (at CRTC init, and again by dc_runtime_resume()
+	 * after a real power cycle).  Only the FrameGen, ConstFrame contents
+	 * and ExtDst source are reprogrammed per modeset, matching the dpu95
+	 * driver.
 	 */
 	dc_fg_init(dc_crtc->fg);
 	dc_fg_cfg_videomode(dc_crtc->fg, adj);
@@ -105,7 +178,7 @@ static void dc_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	 * its rate from the LDB clock tree, so nothing is set here.
 	 */
 	if (dc_crtc->output_is_dsi) {
-		int ret = clk_set_rate(dc_drm->clk_pix, adj->clock * 1000);
+		int ret = dc_fg_set_pix_clock_rate(dc_crtc->fg, adj->clock * 1000);
 
 		if (ret < 0)
 			dc_crtc_err(crtc, "failed to set pix clock rate: %d\n",
@@ -158,10 +231,13 @@ dc_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 	drm_crtc_vblank_on(crtc);
 
 	/*
-	 * Select the FrameGen pixel-clock source and enable it here rather than
-	 * in mode_set_nofb, so the FrameGen starts on a clean frame instead of
+	 * Select the FrameGen pixel-clock source here rather than in
+	 * mode_set_nofb, so the FrameGen starts on a clean frame instead of
 	 * free-running through the mode set.  The DSI PLL feeds the MIPI-DSI path,
 	 * the LVDS PLL the LDB path.  Balanced in dc_crtc_atomic_disable().
+	 * The "pix" clock itself (either path) is enabled uniformly below by
+	 * dc_fg_enable_clock(); only the LVDS path's extra LDB PLL clocks need
+	 * separate handling here.
 	 */
 	if (dc_drm->dispmix_csr)
 		regmap_update_bits(dc_drm->dispmix_csr, DC_IMX95_CLOCK_CTRL,
@@ -170,18 +246,10 @@ dc_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 				   DC_IMX95_PIX_CLK_SEL_DSI_PLL(dc_crtc->fg->id) :
 				   DC_IMX95_PIX_CLK_SEL_LVDS_PLL(dc_crtc->fg->id));
 
-	if (dc_crtc->output_is_dsi) {
-		ret = clk_prepare_enable(dc_drm->clk_pix);
+	if (!dc_crtc->output_is_dsi) {
+		ret = dc_fg_enable_ldb_clocks(dc_crtc->fg);
 		if (ret)
-			dc_crtc_err(crtc, "failed to enable pix clock: %d\n", ret);
-	} else {
-		ret = clk_prepare_enable(dc_drm->clk_ldb_vco);
-		if (ret)
-			dc_crtc_err(crtc, "failed to enable ldb_vco clock: %d\n",
-				    ret);
-		ret = clk_prepare_enable(dc_drm->clk_ldb);
-		if (ret)
-			dc_crtc_err(crtc, "failed to enable ldb clock: %d\n", ret);
+			dc_crtc_err(crtc, "failed to enable ldb clocks: %d\n", ret);
 	}
 
 	if (dc_crtc->irq_db_shdload)
@@ -255,12 +323,9 @@ dc_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 
 	dc_fg_disable_clock(dc_crtc->fg);
 
-	if (dc_crtc->output_is_dsi) {
-		clk_disable_unprepare(dc_drm->clk_pix);
-	} else {
-		clk_disable_unprepare(dc_drm->clk_ldb);
-		clk_disable_unprepare(dc_drm->clk_ldb_vco);
-	}
+	if (!dc_crtc->output_is_dsi)
+		dc_fg_disable_ldb_clocks(dc_crtc->fg);
+
 	if (dc_drm->dispmix_csr)
 		regmap_update_bits(dc_drm->dispmix_csr, DC_IMX95_CLOCK_CTRL,
 				   DC_IMX95_PIX_CLK_SEL_MASK(dc_crtc->fg->id), 0);
@@ -276,6 +341,55 @@ out:
 		new_crtc_state->event = NULL;
 	}
 	spin_unlock_irq(&crtc->dev->event_lock);
+
+	/*
+	 * drm_crtc_vblank_off() above already masked the IRQ if it was
+	 * enabled; freeing it here (rather than just leaving it masked)
+	 * drops the interrupt controller's runtime-PM reference taken by
+	 * devm_request_irq() - see dc_crtc_mode_set_nofb().
+	 */
+	if (dc_crtc->framecomplete_irq_requested) {
+		devm_free_irq(dc_crtc->irq_dec_dev, dc_crtc->irq_dec_framecomplete,
+			      dc_crtc);
+		dc_crtc->framecomplete_irq_requested = false;
+	}
+
+	/* Balances the get() in dc_crtc_mode_set_nofb(). */
+	pm_runtime_put(crtc->dev->dev);
+}
+
+/*
+ * On a modeset, atomic_enable() issues the ExtDst content sync trigger
+ * itself once FrameGen is running.  This hook runs earlier, while
+ * FrameGen is still disabled from the preceding atomic_disable(); a sync
+ * trigger here would wedge the shadow load waiting on a FrameGen that
+ * never kicks it.  Only non-modeset flips are flushed here.
+ */
+static void
+dc_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_commit *state)
+{
+	struct drm_crtc_state *old_crtc_state =
+				drm_atomic_get_old_crtc_state(state, crtc);
+	struct drm_crtc_state *new_crtc_state =
+				drm_atomic_get_new_crtc_state(state, crtc);
+	struct dc_crtc *dc_crtc = to_dc_crtc(crtc);
+	int idx;
+
+	if (drm_atomic_crtc_needs_modeset(new_crtc_state) ||
+	    (!old_crtc_state->active && !new_crtc_state->active))
+		return;
+
+	if (!drm_dev_enter(crtc->dev, &idx))
+		goto out;
+
+	dc_ed_pec_sync_trigger(dc_crtc->ed_cont);
+
+	DC_CRTC_CHECK_FRAMEGEN_FIFO(dc_crtc->fg);
+
+	drm_dev_exit(idx);
+
+out:
+	dc_crtc_queue_state_event(new_crtc_state, false);
 }
 
 void dc_crtc_disable_at_boot(struct drm_crtc *crtc)
@@ -287,17 +401,35 @@ void dc_crtc_disable_at_boot(struct drm_crtc *crtc)
 		dc_fg_disable(dc_crtc->fg);
 		dc_fg_shdtokgen(dc_crtc->fg);
 	}
+
+	/*
+	 * dc_crtc_post_init() (called just before this, from dc_kms_init())
+	 * requested the framecomplete IRQ for every CRTC unconditionally.
+	 * Free it here for whichever CRTCs stay inactive: an inactive CRTC
+	 * never goes through atomic_disable(), so its boot-time request
+	 * would otherwise never be released, permanently pinning dc-ic's
+	 * (shared, single) interrupt controller device active regardless of
+	 * whether the *other* CRTC's own free/request cycling (see
+	 * dc_crtc_mode_set_nofb()/atomic_disable()) is working correctly.
+	 * A CRTC that does get used re-requests it in mode_set_nofb() on
+	 * its first real modeset.
+	 */
+	if (dc_crtc->framecomplete_irq_requested) {
+		devm_free_irq(dc_crtc->irq_dec_dev, dc_crtc->irq_dec_framecomplete,
+			      dc_crtc);
+		dc_crtc->framecomplete_irq_requested = false;
+	}
 }
 
 /*
- * One-time hardware init of the i.MX95 content-path pixel-engine blocks.
- * Runs once at CRTC init; the permanent runtime-PM reference keeps
- * IMX95_PD_DISPLAY powered so this static setup persists across modesets.
- * The per-modeset path (dc_crtc_mode_set_nofb) then only reprograms the
- * FrameGen, ConstFrame contents and ExtDst source selection - it must not
- * re-init these blocks, or the ExtDst PixEngCfg reset desyncs it from the
- * free-running FrameGen and the content shadow load never latches on a
- * re-tune.  Mirrors the monolithic dpu95 driver's hw-init model.
+ * Hardware init of the i.MX95 content-path pixel-engine blocks.  Runs at
+ * CRTC init, and again from dc_crtc_reinit_hw() after a real power-domain
+ * cycle resets these blocks.  The per-modeset path (dc_crtc_mode_set_nofb)
+ * only reprograms the FrameGen, ConstFrame contents and ExtDst source
+ * selection between those two points - it must not call this again itself,
+ * or the ExtDst PixEngCfg reset desyncs it from the still-running FrameGen
+ * and the content shadow load never latches.  Mirrors the monolithic dpu95
+ * driver's hw-init model.
  */
 static void dc_crtc_pe_hw_init(struct dc_crtc *dc_crtc)
 {
@@ -323,6 +455,21 @@ static void dc_crtc_pe_hw_init(struct dc_crtc *dc_crtc)
 	}
 }
 
+/*
+ * Reinit every CRTC's content-path blocks after a real power-domain cycle
+ * (called from dc_runtime_resume() when dc_priv->dc_drm is set, i.e. never
+ * on the initial probe-time resume).  A power cycle resets FrameGen and
+ * ExtDst together, so unlike a live re-tune, reinit here does not desync
+ * them - see the warning in dc_crtc_pe_hw_init().
+ */
+void dc_crtc_reinit_hw(struct dc_drm_device *dc_drm)
+{
+	int i;
+
+	for (i = 0; i < DC_DISPLAYS; i++)
+		dc_crtc_pe_hw_init(&dc_drm->dc_crtc[i]);
+}
+
 /* Software-vblank variant: no hardware scanout position. */
 static const struct drm_crtc_funcs dc_crtc_swvblank_funcs = {
 	.reset			= drm_atomic_helper_crtc_reset,
@@ -335,11 +482,16 @@ static const struct drm_crtc_funcs dc_crtc_swvblank_funcs = {
 	.disable_vblank		= dc_crtc_disable_vblank,
 };
 
+/*
+ * No .atomic_begin: unlike i.MX8QXP, i.MX95 has no pixel engine to resume
+ * ahead of the register programming.  DC device PM is cycled per-modeset
+ * (see dc_crtc_mode_set_nofb()/atomic_disable()), and the FrameGen/LDB
+ * clocks are handled entirely in atomic_enable()/atomic_disable().
+ */
 static const struct drm_crtc_helper_funcs dc_helper_swvblank_funcs = {
 	.mode_valid		= dc_crtc_mode_valid,
 	.atomic_check		= dc_crtc_atomic_check,
 	.mode_set_nofb		= dc_crtc_mode_set_nofb,
-	.atomic_begin		= dc_crtc_atomic_begin,
 	.atomic_flush		= dc_crtc_atomic_flush,
 	.atomic_enable		= dc_crtc_atomic_enable,
 	.atomic_disable		= dc_crtc_atomic_disable,
@@ -440,6 +592,13 @@ int dc_crtc_post_init(struct dc_drm_device *dc_drm, int crtc_index)
 {
 	struct dc_crtc *dc_crtc = &dc_drm->dc_crtc[crtc_index];
 	struct drm_device *drm = &dc_drm->base;
+	int ret;
 
-	return dc_crtc_request_irqs(drm, dc_crtc);
+	ret = dc_crtc_request_irqs(drm, dc_crtc);
+	if (ret)
+		return ret;
+
+	dc_crtc->framecomplete_irq_requested = dc_crtc->irq_dec_framecomplete;
+
+	return 0;
 }

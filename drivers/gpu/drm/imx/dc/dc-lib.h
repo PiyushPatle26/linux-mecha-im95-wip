@@ -13,7 +13,7 @@
 
 struct dc_subdev_info;
 
-/* Hardware constants shared across all DC8000-family blocks. */
+/* Hardware constants shared across all Display Controller blocks. */
 #define SHDEN			BIT(0)
 
 #define CLKEN_MASK_SHIFT	24
@@ -22,7 +22,7 @@ struct dc_subdev_info;
 
 /*
  * i.MX95-specific link ID values (differ from i.MX8QXP for some blocks).
- * These are DC8000-family hardware interconnect IDs.
+ * These are Display Controller hardware interconnect IDs.
  */
 #define IMX95_LINK_ID_NONE		0x00
 #define IMX95_LINK_ID_CONSTFRAME0	0x0c

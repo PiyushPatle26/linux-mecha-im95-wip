@@ -22,6 +22,8 @@ struct dc_fg {
 	struct device *dev;
 	struct regmap *reg;
 	struct clk *clk_disp;
+	struct clk *clk_ldb;		/* i.MX95 LVDS path: LDB PLL /7 divider */
+	struct clk *clk_ldb_vco;	/* i.MX95 LVDS path: LDB PLL VCO */
 	unsigned int id;
 	const struct dc_lib_fg_offsets *offsets;
 };
@@ -58,6 +60,9 @@ void dc_fg_enable_clock(struct dc_fg *fg);
 void dc_fg_disable_clock(struct dc_fg *fg);
 enum drm_mode_status dc_fg_check_clock(struct dc_fg *fg, int clk_khz);
 void dc_fg_init(struct dc_fg *fg);
+int dc_fg_set_pix_clock_rate(struct dc_fg *fg, unsigned long rate_hz);
+int dc_fg_enable_ldb_clocks(struct dc_fg *fg);
+void dc_fg_disable_ldb_clocks(struct dc_fg *fg);
 
 /* Timing Controller Unit */
 void dc_tc_set_operation_mode(struct dc_tc *tc);

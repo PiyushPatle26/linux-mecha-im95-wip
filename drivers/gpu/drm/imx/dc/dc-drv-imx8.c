@@ -2,7 +2,10 @@
 /*
  * Copyright 2024 NXP
  *
- * i.MX8QXP DC8000 DRM platform driver.
+ * i.MX8 Display Controller DRM platform driver (i.MX8QXP today; the driver
+ * name/module and this file are kept SoC-family-generic rather than
+ * QXP-specific, matching how i.MX8QM's DC8000 fits the same component
+ * model with match-data deltas rather than needing a separate driver).
  */
 
 #include <linux/clk.h>
@@ -45,8 +48,8 @@ static struct drm_driver dc_drm_driver = {
 	DRM_GEM_DMA_DRIVER_OPS,
 	DRM_FBDEV_DMA_DRIVER_OPS,
 	.fops = &dc_drm_driver_fops,
-	.name = "imx8qxp-dc",
-	.desc = "i.MX8QXP DC8000 DRM graphics",
+	.name = "imx8-dc",
+	.desc = "i.MX8QXP Display Controller DRM graphics",
 	.major = 1,
 	.minor = 0,
 	.patchlevel = 0,
@@ -279,13 +282,13 @@ static struct platform_driver dc_imx8qxp_driver = {
 	.remove		= dc_remove,
 	.shutdown	= dc_shutdown,
 	.driver = {
-		.name		= "imx8qxp-dc",
+		.name		= "imx8-dc",
 		.of_match_table	= dc_imx8qxp_dt_ids,
 		.pm		= pm_sleep_ptr(&dc_pm_ops),
 	},
 };
 module_platform_driver(dc_imx8qxp_driver);
 
-MODULE_DESCRIPTION("i.MX8QXP DC8000 DRM Driver");
+MODULE_DESCRIPTION("i.MX8QXP Display Controller DRM Driver");
 MODULE_AUTHOR("Liu Ying <victor.liu@nxp.com>");
 MODULE_LICENSE("GPL");

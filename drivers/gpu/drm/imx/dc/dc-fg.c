@@ -397,6 +397,52 @@ void dc_fg_disable_clock(struct dc_fg *fg)
 }
 EXPORT_SYMBOL_GPL(dc_fg_disable_clock);
 
+/*
+ * i.MX95 MIPI-DSI output only: the LVDS path derives its rate from the
+ * LDB PLL tree instead, see dc_fg_enable_ldb_clocks().
+ */
+int dc_fg_set_pix_clock_rate(struct dc_fg *fg, unsigned long rate_hz)
+{
+	if (!fg->clk_disp)
+		return 0;
+	return clk_set_rate(fg->clk_disp, rate_hz);
+}
+EXPORT_SYMBOL_GPL(dc_fg_set_pix_clock_rate);
+
+/* i.MX95 LVDS output only: enable the LDB PLL /7 divider and its VCO. */
+int dc_fg_enable_ldb_clocks(struct dc_fg *fg)
+{
+	int ret;
+
+	if (!fg->clk_ldb_vco || !fg->clk_ldb)
+		return 0;
+
+	ret = clk_prepare_enable(fg->clk_ldb_vco);
+	if (ret) {
+		dev_err(fg->dev, "failed to enable ldb_vco clock: %d\n", ret);
+		return ret;
+	}
+
+	ret = clk_prepare_enable(fg->clk_ldb);
+	if (ret) {
+		dev_err(fg->dev, "failed to enable ldb clock: %d\n", ret);
+		clk_disable_unprepare(fg->clk_ldb_vco);
+		return ret;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(dc_fg_enable_ldb_clocks);
+
+void dc_fg_disable_ldb_clocks(struct dc_fg *fg)
+{
+	if (!fg->clk_ldb_vco || !fg->clk_ldb)
+		return;
+	clk_disable_unprepare(fg->clk_ldb);
+	clk_disable_unprepare(fg->clk_ldb_vco);
+}
+EXPORT_SYMBOL_GPL(dc_fg_disable_ldb_clocks);
+
 enum drm_mode_status dc_fg_check_clock(struct dc_fg *fg, int clk_khz)
 {
 	unsigned long rounded_rate;
@@ -453,14 +499,32 @@ static int dc_fg_bind(struct device *dev, struct device *master, void *data)
 	if (IS_ERR(fg->reg))
 		return PTR_ERR(fg->reg);
 
-	fg->clk_disp = devm_clk_get(dev, NULL);
-	if (IS_ERR(fg->clk_disp)) {
-		if (of_device_is_compatible(dev->of_node, "fsl,imx95-dc-framegen")) {
-			fg->clk_disp = NULL;
-		} else {
+	if (of_device_is_compatible(dev->of_node, "fsl,imx95-dc-framegen")) {
+		/*
+		 * "pix" feeds the FrameGen pixel clock directly (MIPI-DSI
+		 * path); "ldb"/"ldb_vco" feed it through the LDB PLL /7
+		 * divider (LVDS path) and are only enabled around FrameGen
+		 * start/stop by dc_fg_enable/disable_ldb_clocks(), not here.
+		 */
+		fg->clk_disp = devm_clk_get_optional(dev, "pix");
+		if (IS_ERR(fg->clk_disp))
+			return dev_err_probe(dev, PTR_ERR(fg->clk_disp),
+					     "failed to get pix clock\n");
+
+		fg->clk_ldb = devm_clk_get_optional(dev, "ldb");
+		if (IS_ERR(fg->clk_ldb))
+			return dev_err_probe(dev, PTR_ERR(fg->clk_ldb),
+					     "failed to get ldb clock\n");
+
+		fg->clk_ldb_vco = devm_clk_get_optional(dev, "ldb_vco");
+		if (IS_ERR(fg->clk_ldb_vco))
+			return dev_err_probe(dev, PTR_ERR(fg->clk_ldb_vco),
+					     "failed to get ldb_vco clock\n");
+	} else {
+		fg->clk_disp = devm_clk_get(dev, NULL);
+		if (IS_ERR(fg->clk_disp))
 			return dev_err_probe(dev, PTR_ERR(fg->clk_disp),
 					     "failed to get display clock\n");
-		}
 	}
 
 	id = dc_subdev_get_id(match_data->subdev_info,

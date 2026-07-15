@@ -2,7 +2,8 @@
 /*
  * Copyright 2024 NXP
  *
- * CRTC helpers shared between the i.MX8QXP and i.MX95 DC8000 DRM drivers.
+ * CRTC helpers shared between the i.MX8QXP and i.MX95 Display Controller DRM
+ * drivers.
  */
 
 #include <linux/completion.h>
@@ -11,26 +12,16 @@
 #include <linux/interrupt.h>
 #include <linux/math64.h>
 #include <linux/module.h>
-#include <linux/pm_runtime.h>
 
-#include <drm/drm_atomic.h>
-#include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
-#include <drm/drm_drv.h>
 #include <drm/drm_modes.h>
-#include <drm/drm_modeset_helper_vtables.h>
-#include <drm/drm_plane.h>
 #include <drm/drm_print.h>
 #include <drm/drm_vblank.h>
 
 #include "dc-crtc-common.h"
 #include "dc-de.h"
-#include "dc-dprc.h"
-#include "dc-drv.h"
-#include "dc-fu.h"
 #include "dc-kms.h"
-#include "dc-pe.h"
 
 static enum hrtimer_restart dc_crtc_vblank_hrtimer(struct hrtimer *timer)
 {
@@ -94,23 +85,6 @@ void dc_crtc_disable_vblank(struct drm_crtc *crtc)
 }
 EXPORT_SYMBOL_GPL(dc_crtc_disable_vblank);
 
-enum drm_mode_status
-dc_crtc_mode_valid(struct drm_crtc *crtc, const struct drm_display_mode *mode)
-{
-	struct dc_crtc *dc_crtc = to_dc_crtc(crtc);
-	enum drm_mode_status status;
-
-	status = dc_fg_check_clock(dc_crtc->fg, mode->clock);
-	if (status != MODE_OK)
-		return status;
-
-	if (mode->crtc_clock > DC_FRAMEGEN_MAX_CLOCK_KHZ)
-		return MODE_CLOCK_HIGH;
-
-	return MODE_OK;
-}
-EXPORT_SYMBOL_GPL(dc_crtc_mode_valid);
-
 void dc_crtc_queue_state_event(struct drm_crtc_state *crtc_state, bool may_defer)
 {
 	struct drm_crtc *crtc = crtc_state->crtc;
@@ -131,139 +105,7 @@ void dc_crtc_queue_state_event(struct drm_crtc_state *crtc_state, bool may_defer
 }
 EXPORT_SYMBOL_GPL(dc_crtc_queue_state_event);
 
-int
-dc_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
-{
-	struct drm_crtc_state *new_crtc_state =
-				drm_atomic_get_new_crtc_state(state, crtc);
-	struct drm_display_mode *adj = &new_crtc_state->adjusted_mode;
-	struct dc_crtc *dc_crtc = to_dc_crtc(crtc);
-	enum drm_mode_status status;
-
-	status = dc_fg_check_clock(dc_crtc->fg, adj->clock);
-	if (status != MODE_OK)
-		return -EINVAL;
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(dc_crtc_atomic_check);
-
-void
-dc_crtc_atomic_begin(struct drm_crtc *crtc, struct drm_atomic_commit *state)
-{
-	struct drm_crtc_state *new_crtc_state =
-				drm_atomic_get_new_crtc_state(state, crtc);
-	struct dc_drm_device *dc_drm = to_dc_drm_device(crtc->dev);
-	int idx, ret;
-
-	if (!drm_atomic_crtc_needs_modeset(new_crtc_state) ||
-	    !new_crtc_state->active)
-		return;
-
-	if (!drm_dev_enter(crtc->dev, &idx))
-		return;
-
-	/*
-	 * i.MX8QXP: the pixel engine (PE) owns the AXI bus clock for all
-	 * fetch units, so resume pe->dev (dc_pe_runtime_resume enables clk_axi).
-	 * i.MX95 has no PE; its DC device PM is managed in atomic_enable/disable.
-	 */
-	if (dc_drm->pe && dc_drm->pe->dev) {
-		ret = pm_runtime_resume_and_get(dc_drm->pe->dev);
-		if (ret)
-			dc_crtc_err(crtc,
-				    "failed to get DC pixel engine RPM: %d\n",
-				    ret);
-	}
-
-	drm_dev_exit(idx);
-}
-EXPORT_SYMBOL_GPL(dc_crtc_atomic_begin);
-
-void
-dc_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_commit *state)
-{
-	struct drm_crtc_state *old_crtc_state =
-				drm_atomic_get_old_crtc_state(state, crtc);
-	struct drm_crtc_state *new_crtc_state =
-				drm_atomic_get_new_crtc_state(state, crtc);
-	struct drm_plane_state *old_plane_state =
-			drm_atomic_get_old_plane_state(state, crtc->primary);
-	struct drm_plane_state *new_plane_state =
-			drm_atomic_get_new_plane_state(state, crtc->primary);
-	struct dc_plane *dc_plane = to_dc_plane(crtc->primary);
-	struct dc_crtc *dc_crtc = to_dc_crtc(crtc);
-	bool disabling_plane;
-	int idx;
-
-	if ((!dc_crtc->db && drm_atomic_crtc_needs_modeset(new_crtc_state)) ||
-	    (!old_crtc_state->active && !new_crtc_state->active))
-		return;
-
-	/*
-	 * i.MX95: on a modeset the ExtDst content sync trigger is issued by
-	 * ->atomic_enable, after the FrameGen has been started.  atomic_flush
-	 * runs (commit_planes) BEFORE ->atomic_enable (commit_modeset_enables),
-	 * i.e. while the FrameGen is still disabled from the preceding
-	 * ->atomic_disable.  A sync trigger issued here would raise the ExtDst
-	 * external-kick SYNC_BUSY with no running FrameGen to kick it, wedging
-	 * the shadow load for the whole modeset.  The flip event is handled by
-	 * ->atomic_enable; only non-modeset flips flush their plane update here.
-	 */
-	if (dc_crtc->db && drm_atomic_crtc_needs_modeset(new_crtc_state))
-		return;
-
-	if (!drm_dev_enter(crtc->dev, &idx))
-		goto out;
-
-	if (dc_crtc->irq_ed_cont_shdload)
-		enable_irq(dc_crtc->irq_ed_cont_shdload);
-
-	disabling_plane = drm_atomic_plane_disabling(old_plane_state,
-						     new_plane_state);
-
-	if (disabling_plane && dc_plane->fu->dprc) {
-		unsigned long flags;
-
-		dc_crtc_dbg(crtc, "disabling plane\n");
-
-		/*
-		 * Don't relinquish CPU until DPRC REPEAT_EN is disabled and
-		 * sync is triggered.
-		 */
-		local_irq_save(flags);
-		preempt_disable();
-
-		DC_CRTC_WAIT_FOR_FRAMEGEN_FRAME_INDEX_MOVING(dc_crtc->fg);
-		dc_dprc_disable_repeat_en(dc_plane->fu->dprc);
-		/* flush plane update out to display */
-		dc_ed_pec_sync_trigger(dc_crtc->ed_cont);
-
-		local_irq_restore(flags);
-		preempt_enable();
-	} else {
-		/* flush plane update out to display */
-		dc_ed_pec_sync_trigger(dc_crtc->ed_cont);
-	}
-
-	if (dc_crtc->irq_ed_cont_shdload) {
-		DC_CRTC_WAIT_FOR_COMPLETION_TIMEOUT(ed_cont_shdload_done);
-		disable_irq(dc_crtc->irq_ed_cont_shdload);
-	}
-
-	if (disabling_plane && dc_plane->fu->dprc)
-		dc_dprc_disable(dc_plane->fu->dprc);
-
-	DC_CRTC_CHECK_FRAMEGEN_FIFO(dc_crtc->fg);
-
-	drm_dev_exit(idx);
-
-out:
-	dc_crtc_queue_state_event(new_crtc_state, !dc_crtc->db);
-}
-EXPORT_SYMBOL_GPL(dc_crtc_atomic_flush);
-
-static irqreturn_t dc_crtc_irq_handler_dec_framecomplete(int irq, void *dev_id)
+irqreturn_t dc_crtc_irq_handler_dec_framecomplete(int irq, void *dev_id)
 {
 	struct dc_crtc *dc_crtc = dev_id;
 	struct drm_crtc *crtc = &dc_crtc->base;
@@ -281,6 +123,7 @@ static irqreturn_t dc_crtc_irq_handler_dec_framecomplete(int irq, void *dev_id)
 
 	return IRQ_HANDLED;
 }
+EXPORT_SYMBOL_GPL(dc_crtc_irq_handler_dec_framecomplete);
 
 static irqreturn_t
 dc_crtc_irq_handler_dec_seqcomplete_done(int irq, void *dev_id)

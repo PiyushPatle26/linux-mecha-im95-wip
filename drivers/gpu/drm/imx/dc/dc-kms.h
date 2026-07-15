@@ -112,6 +112,18 @@ struct dc_crtc {
 	/** @db_dev: device owning the DomainBlend interrupt (i.MX95 only) */
 	struct device *db_dev;
 	/**
+	 * @framecomplete_irq_requested:
+	 *
+	 * i.MX95 only: whether irq_dec_framecomplete is currently
+	 * devm_request_irq()'d.  dc_crtc_post_init() does the first
+	 * request; dc_crtc_mode_set_nofb()/atomic_disable() then
+	 * devm_request_irq()/devm_free_irq() it around each modeset, so
+	 * the underlying interrupt controller's runtime-PM reference can
+	 * actually drop between modesets instead of staying held for the
+	 * driver's whole lifetime.
+	 */
+	bool framecomplete_irq_requested;
+	/**
 	 * @dec_seqcomplete_done:
 	 *
 	 * display engine configuration sequence completion
